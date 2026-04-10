@@ -1,7 +1,12 @@
 #include "AppRuntime.h"
+#include <esp_system.h>
 
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.0"
+#define APP_VERSION "0.2.2"
+#endif
+
+#ifndef BUILD_STAMP
+#define BUILD_STAMP __DATE__ " " __TIME__
 #endif
 
 namespace {
@@ -43,6 +48,14 @@ uint8_t kReadCommand[] = {0xFF, 0x01, 0x86, 0x00, 0x00, 0x00, 0x00, 0x00, 0x79};
 void AppRuntime::setup() {
   Serial.begin(115200);
   delay(1000);
+  Serial.println();
+  Serial.println("=== Nariz Metatron ===");
+  Serial.print("Firmware: ");
+  Serial.println(APP_VERSION);
+  Serial.print("Build: ");
+  Serial.println(BUILD_STAMP);
+  Serial.print("Reset: ");
+  Serial.println(getResetReason());
 
   setupHardware();
   setupSensors();
@@ -131,10 +144,10 @@ void AppRuntime::loadConfig() {
 
   runtimeConfig.wifiSsid = preferences.getString("wifi_ssid", "");
   runtimeConfig.wifiPassword = preferences.getString("wifi_pass", "");
-  runtimeConfig.adminUser = preferences.getString("adm_user", kDefaultAdminUser);
-  runtimeConfig.adminPassword = preferences.getString("adm_pass", kDefaultAdminPassword);
-  runtimeConfig.otaEnabled = preferences.getBool("ota_en", false);
-  runtimeConfig.otaManifestUrl = preferences.getString("ota_url", "");
+  runtimeConfig.adminUser = preferences.isKey("adm_user") ? preferences.getString("adm_user", kDefaultAdminUser) : kDefaultAdminUser;
+  runtimeConfig.adminPassword = preferences.isKey("adm_pass") ? preferences.getString("adm_pass", kDefaultAdminPassword) : kDefaultAdminPassword;
+  runtimeConfig.otaEnabled = preferences.isKey("ota_en") ? preferences.getBool("ota_en", false) : false;
+  runtimeConfig.otaManifestUrl = preferences.isKey("ota_url") ? preferences.getString("ota_url", "") : "";
   preferences.end();
 
   if (runtimeConfig.adminUser.isEmpty()) {
@@ -143,6 +156,9 @@ void AppRuntime::loadConfig() {
   if (runtimeConfig.adminPassword.isEmpty()) {
     runtimeConfig.adminPassword = kDefaultAdminPassword;
   }
+
+  loadOtaStatus();
+  finalizePendingOtaUpdate();
 }
 
 void AppRuntime::saveOperationalConfig() {
@@ -174,6 +190,67 @@ void AppRuntime::saveOtaConfig() {
   preferences.putBool("ota_en", runtimeConfig.otaEnabled);
   preferences.putString("ota_url", runtimeConfig.otaManifestUrl);
   preferences.end();
+}
+
+void AppRuntime::loadOtaStatus() {
+  preferences.begin(kPrefsNamespace, true);
+  otaStatus.lastMessage = preferences.isKey("ota_msg")
+      ? preferences.getString("ota_msg", runtimeConfig.otaEnabled ? "OTA configurada" : "OTA deshabilitada")
+      : (runtimeConfig.otaEnabled ? "OTA configurada" : "OTA deshabilitada");
+  otaStatus.lastCheck = preferences.isKey("ota_chk")
+      ? preferences.getString("ota_chk", "Nunca")
+      : "Nunca";
+  otaStatus.availableVersion = preferences.isKey("ota_av")
+      ? preferences.getString("ota_av", "-")
+      : "-";
+  preferences.end();
+}
+
+void AppRuntime::saveOtaStatus() {
+  preferences.begin(kPrefsNamespace, false);
+  preferences.putString("ota_msg", otaStatus.lastMessage);
+  preferences.putString("ota_chk", otaStatus.lastCheck);
+  preferences.putString("ota_av", otaStatus.availableVersion);
+  preferences.end();
+}
+
+void AppRuntime::setPendingOtaVersion(const String& version) {
+  preferences.begin(kPrefsNamespace, false);
+  preferences.putBool("ota_pend", true);
+  preferences.putString("ota_exp", version);
+  preferences.end();
+}
+
+void AppRuntime::clearPendingOtaVersion() {
+  preferences.begin(kPrefsNamespace, false);
+  preferences.remove("ota_pend");
+  preferences.remove("ota_exp");
+  preferences.end();
+}
+
+void AppRuntime::finalizePendingOtaUpdate() {
+  preferences.begin(kPrefsNamespace, true);
+  const bool pending = preferences.isKey("ota_pend") ? preferences.getBool("ota_pend", false) : false;
+  const String expectedVersion = preferences.isKey("ota_exp") ? preferences.getString("ota_exp", "") : "";
+  preferences.end();
+
+  if (!pending) {
+    return;
+  }
+
+  if (!expectedVersion.isEmpty() && String(APP_VERSION) == expectedVersion) {
+    otaStatus.lastMessage = "OTA aplicada correctamente. Version activa: " + expectedVersion;
+    otaStatus.availableVersion = expectedVersion;
+  } else {
+    otaStatus.lastMessage = "Se reinicio tras OTA, pero el firmware activo informa " + String(APP_VERSION) +
+                            " y no la version esperada " + expectedVersion +
+                            ". Probablemente el release se genero con APP_VERSION vieja.";
+    otaStatus.availableVersion = expectedVersion.isEmpty() ? "-" : expectedVersion;
+  }
+
+  otaStatus.lastCheck = getDateTimeString();
+  saveOtaStatus();
+  clearPendingOtaVersion();
 }
 
 void AppRuntime::startAccessPoint() {
@@ -575,6 +652,39 @@ String AppRuntime::jsonEscape(const String& value) {
   return escaped;
 }
 
+String AppRuntime::getBuildStamp() {
+  return String(BUILD_STAMP);
+}
+
+String AppRuntime::getResetReason() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_UNKNOWN:
+      return "UNKNOWN";
+    case ESP_RST_POWERON:
+      return "POWERON";
+    case ESP_RST_EXT:
+      return "EXT";
+    case ESP_RST_SW:
+      return "SW";
+    case ESP_RST_PANIC:
+      return "PANIC";
+    case ESP_RST_INT_WDT:
+      return "INT_WDT";
+    case ESP_RST_TASK_WDT:
+      return "TASK_WDT";
+    case ESP_RST_WDT:
+      return "WDT";
+    case ESP_RST_DEEPSLEEP:
+      return "DEEPSLEEP";
+    case ESP_RST_BROWNOUT:
+      return "BROWNOUT";
+    case ESP_RST_SDIO:
+      return "SDIO";
+    default:
+      return "OTHER";
+  }
+}
+
 String AppRuntime::buildDataJson() {
   String json = "{";
   json += "\"co\":" + String(indData.co);
@@ -593,6 +703,8 @@ String AppRuntime::buildDataJson() {
   json += ",\"date\":\"" + jsonEscape(getDate()) + "\"";
   json += ",\"time\":\"" + jsonEscape(getTimestamp()) + "\"";
   json += ",\"firmwareVersion\":\"" + jsonEscape(String(APP_VERSION)) + "\"";
+  json += ",\"buildStamp\":\"" + jsonEscape(getBuildStamp()) + "\"";
+  json += ",\"resetReason\":\"" + jsonEscape(getResetReason()) + "\"";
   json += ",\"otaMessage\":\"" + jsonEscape(otaStatus.lastMessage) + "\"";
   json += ",\"otaLastCheck\":\"" + jsonEscape(otaStatus.lastCheck) + "\"";
   json += ",\"otaAvailableVersion\":\"" + jsonEscape(otaStatus.availableVersion) + "\"";

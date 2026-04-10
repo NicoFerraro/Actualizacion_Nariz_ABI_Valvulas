@@ -2,7 +2,11 @@
 #include "web_ui.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.0"
+#define APP_VERSION "0.2.2"
+#endif
+
+#ifndef BUILD_STAMP
+#define BUILD_STAMP __DATE__ " " __TIME__
 #endif
 
 namespace {
@@ -87,6 +91,8 @@ String AppRuntime::buildConfigJson() {
   json += ",\"otaEnabled\":" + String(runtimeConfig.otaEnabled ? "true" : "false");
   json += ",\"otaManifestUrl\":\"" + jsonEscape(runtimeConfig.otaManifestUrl) + "\"";
   json += ",\"firmwareVersion\":\"" + jsonEscape(String(APP_VERSION)) + "\"";
+  json += ",\"buildStamp\":\"" + jsonEscape(getBuildStamp()) + "\"";
+  json += ",\"resetReason\":\"" + jsonEscape(getResetReason()) + "\"";
   json += ",\"otaStatus\":\"" + jsonEscape(otaStatus.lastMessage) + "\"";
   json += ",\"otaLastCheck\":\"" + jsonEscape(otaStatus.lastCheck) + "\"";
   json += ",\"otaAvailableVersion\":\"" + jsonEscape(otaStatus.availableVersion) + "\"";
@@ -179,6 +185,9 @@ bool AppRuntime::parseManifest(const String& manifestBody, OtaManifest& manifest
 }
 
 bool AppRuntime::downloadAndApplyFirmware(const OtaManifest& manifest, String& message) {
+  Serial.print("[OTA] Descargando firmware desde: ");
+  Serial.println(manifest.firmwareUrl);
+
   WiFiClientSecure secureClient;
   secureClient.setInsecure();
 
@@ -194,13 +203,16 @@ bool AppRuntime::downloadAndApplyFirmware(const OtaManifest& manifest, String& m
   const int httpCode = http.GET();
   if (httpCode != HTTP_CODE_OK) {
     message = "Descarga OTA fallo. HTTP " + String(httpCode);
+    Serial.println("[OTA] " + message);
     http.end();
     return false;
   }
 
   const int contentLength = http.getSize();
+  Serial.println("[OTA] Tamano esperado: " + String(contentLength));
   if (!Update.begin(contentLength > 0 ? static_cast<size_t>(contentLength) : UPDATE_SIZE_UNKNOWN)) {
     message = "No se pudo iniciar Update";
+    Serial.println("[OTA] " + message);
     http.end();
     return false;
   }
@@ -219,6 +231,7 @@ bool AppRuntime::downloadAndApplyFirmware(const OtaManifest& manifest, String& m
     if (availableBytes == 0) {
       if (millis() - lastDataAtMs > 15000UL) {
         message = "Timeout durante descarga OTA";
+        Serial.println("[OTA] " + message);
         mbedtls_sha256_free(&shaContext);
         Update.abort();
         http.end();
@@ -237,6 +250,7 @@ bool AppRuntime::downloadAndApplyFirmware(const OtaManifest& manifest, String& m
     lastDataAtMs = millis();
     if (Update.write(buffer, bytesRead) != static_cast<size_t>(bytesRead)) {
       message = "Fallo escribiendo firmware";
+      Serial.println("[OTA] " + message);
       mbedtls_sha256_free(&shaContext);
       Update.abort();
       http.end();
@@ -251,9 +265,20 @@ bool AppRuntime::downloadAndApplyFirmware(const OtaManifest& manifest, String& m
   mbedtls_sha256_finish_ret(&shaContext, digest);
   mbedtls_sha256_free(&shaContext);
 
+  Serial.println("[OTA] Bytes descargados: " + String(totalWritten));
+  if (contentLength > 0 && totalWritten != static_cast<size_t>(contentLength)) {
+    message = "Tamano OTA incompleto";
+    Serial.println("[OTA] " + message);
+    Update.abort();
+    http.end();
+    return false;
+  }
+
   const String actualSha256 = bytesToHexString(digest, sizeof(digest));
   if (!manifest.sha256.equalsIgnoreCase(actualSha256)) {
     message = "SHA256 no coincide con el manifest";
+    Serial.println("[OTA] Esperado: " + manifest.sha256);
+    Serial.println("[OTA] Recibido: " + actualSha256);
     Update.abort();
     http.end();
     return false;
@@ -261,17 +286,20 @@ bool AppRuntime::downloadAndApplyFirmware(const OtaManifest& manifest, String& m
 
   if (!Update.end()) {
     message = "Update.end fallo";
+    Serial.println("[OTA] " + message);
     http.end();
     return false;
   }
 
   if (!Update.isFinished()) {
     message = "La imagen OTA quedo incompleta";
+    Serial.println("[OTA] " + message);
     http.end();
     return false;
   }
 
   http.end();
+  Serial.println("[OTA] Firmware descargado y grabado correctamente.");
   message = "OTA aplicada. Reiniciando...";
   return true;
 }
@@ -281,22 +309,30 @@ void AppRuntime::runOtaCheck(bool manualTrigger) {
   otaStatus.lastCheck = getDateTimeString();
   otaStatus.lastMessage = manualTrigger ? "Chequeo OTA manual en curso" : "Chequeo OTA automatico en curso";
   otaStatus.availableVersion = "-";
+  saveOtaStatus();
+  Serial.println("[OTA] Iniciando chequeo...");
 
   if (!runtimeConfig.otaEnabled) {
     otaStatus.lastMessage = "OTA deshabilitada";
     otaStatus.inProgress = false;
+    saveOtaStatus();
+    Serial.println("[OTA] OTA deshabilitada.");
     return;
   }
 
   if (runtimeConfig.otaManifestUrl.isEmpty()) {
     otaStatus.lastMessage = "Falta URL del manifest OTA";
     otaStatus.inProgress = false;
+    saveOtaStatus();
+    Serial.println("[OTA] Falta URL del manifest OTA.");
     return;
   }
 
   if (WiFi.status() != WL_CONNECTED) {
     otaStatus.lastMessage = "Sin WiFi para OTA";
     otaStatus.inProgress = false;
+    saveOtaStatus();
+    Serial.println("[OTA] Sin WiFi para OTA.");
     return;
   }
 
@@ -310,6 +346,8 @@ void AppRuntime::runOtaCheck(bool manualTrigger) {
   if (!http.begin(secureClient, runtimeConfig.otaManifestUrl)) {
     otaStatus.lastMessage = "No se pudo abrir el manifest OTA";
     otaStatus.inProgress = false;
+    saveOtaStatus();
+    Serial.println("[OTA] No se pudo abrir el manifest OTA.");
     return;
   }
 
@@ -318,6 +356,8 @@ void AppRuntime::runOtaCheck(bool manualTrigger) {
     otaStatus.lastMessage = "Manifest OTA fallo. HTTP " + String(httpCode);
     http.end();
     otaStatus.inProgress = false;
+    saveOtaStatus();
+    Serial.println("[OTA] " + otaStatus.lastMessage);
     return;
   }
 
@@ -328,13 +368,22 @@ void AppRuntime::runOtaCheck(bool manualTrigger) {
   if (!parseManifest(body, manifest)) {
     otaStatus.lastMessage = "Manifest OTA invalido";
     otaStatus.inProgress = false;
+    saveOtaStatus();
+    Serial.println("[OTA] Manifest OTA invalido.");
     return;
   }
+
+  Serial.println("[OTA] Manifest recibido:");
+  Serial.println("[OTA] Version objetivo: " + manifest.version);
+  Serial.println("[OTA] Firmware URL: " + manifest.firmwareUrl);
+  Serial.println("[OTA] SHA256 esperado: " + manifest.sha256);
 
   otaStatus.availableVersion = manifest.version;
   if (compareVersions(String(APP_VERSION), manifest.version) >= 0) {
     otaStatus.lastMessage = "No hay nueva version";
     otaStatus.inProgress = false;
+    saveOtaStatus();
+    Serial.println("[OTA] No hay nueva version.");
     return;
   }
 
@@ -342,11 +391,16 @@ void AppRuntime::runOtaCheck(bool manualTrigger) {
   if (!downloadAndApplyFirmware(manifest, resultMessage)) {
     otaStatus.lastMessage = resultMessage;
     otaStatus.inProgress = false;
+    saveOtaStatus();
+    Serial.println("[OTA] " + resultMessage);
     return;
   }
 
+  setPendingOtaVersion(manifest.version);
   otaStatus.lastMessage = resultMessage;
   otaStatus.inProgress = false;
+  saveOtaStatus();
+  Serial.println("[OTA] " + resultMessage);
   delay(500);
   ESP.restart();
 }
@@ -509,6 +563,7 @@ void AppRuntime::setupWebServer() {
 
     saveOtaConfig();
     otaStatus.lastMessage = runtimeConfig.otaEnabled ? "OTA configurada" : "OTA deshabilitada";
+    saveOtaStatus();
     request->send(200, "text/plain", "OTA guardada");
   });
 

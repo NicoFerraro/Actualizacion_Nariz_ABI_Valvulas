@@ -305,7 +305,8 @@ const char index_html[] PROGMEM = R"rawliteral(
         document.getElementById("ap-ip").innerText = data.apIP;
         document.getElementById("firmware-version").innerText = data.firmwareVersion;
         document.getElementById("ota-summary").innerText =
-          "OTA: " + data.otaMessage + "\nUltimo chequeo: " + data.otaLastCheck + "\nVersion disponible: " + data.otaAvailableVersion;
+          "OTA: " + data.otaMessage + "\nUltimo chequeo: " + data.otaLastCheck +
+          "\nVersion disponible: " + data.otaAvailableVersion + "\nBuild: " + data.buildStamp;
 
         const pill = document.getElementById("pill-state");
         pill.className = "status-pill";
@@ -377,7 +378,7 @@ const char index_html[] PROGMEM = R"rawliteral(
         document.getElementById("auth-user").value = data.adminUser || "";
         document.getElementById("ota-enabled").checked = !!data.otaEnabled;
         document.getElementById("ota-manifest").value = data.otaManifestUrl || "";
-        setMessage("msg-ota", "Version actual: " + data.firmwareVersion + "\nUltimo estado OTA: " + data.otaStatus + "\nUltimo chequeo: " + data.otaLastCheck + "\nVersion disponible: " + data.otaAvailableVersion);
+        setMessage("msg-ota", "Version actual: " + data.firmwareVersion + "\nBuild: " + data.buildStamp + "\nReset: " + data.resetReason + "\nUltimo estado OTA: " + data.otaStatus + "\nUltimo chequeo: " + data.otaLastCheck + "\nVersion disponible: " + data.otaAvailableVersion);
       } catch (error) {
         setMessage("msg-valves", error.message);
       }

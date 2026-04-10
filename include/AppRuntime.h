@@ -92,6 +92,11 @@ class AppRuntime {
   void saveWifiConfig();
   void saveSecurityConfig();
   void saveOtaConfig();
+  void loadOtaStatus();
+  void saveOtaStatus();
+  void setPendingOtaVersion(const String& version);
+  void clearPendingOtaVersion();
+  void finalizePendingOtaUpdate();
 
   void startAccessPoint();
   void beginWifiClientConnection(bool forceReconnect);
@@ -134,6 +139,8 @@ class AppRuntime {
   String jsonEscape(const String& value);
   String bytesToHexString(const uint8_t* data, size_t length);
   String sanitizeCsvFileName(const String& rawName);
+  String getBuildStamp();
+  String getResetReason();
 
   int compareVersions(const String& left, const String& right);
   int getEnabledValveCount();
