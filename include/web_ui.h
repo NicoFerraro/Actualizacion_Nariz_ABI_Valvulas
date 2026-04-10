@@ -81,7 +81,7 @@ const char index_html[] PROGMEM = R"rawliteral(
     canvas { width:100%; height:150px; border-radius:12px; background:rgba(0,0,0,0.28); }
     .config-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:15px; }
     label { display:block; font-size:0.9rem; color:var(--muted); margin-bottom:6px; }
-    input[type="number"], input[type="text"], input[type="password"], input[type="date"], input[type="time"] {
+    input[type="number"], input[type="text"], input[type="password"], input[type="date"], input[type="time"], select {
       width:100%;
       border-radius:12px;
       border:1px solid var(--line);
@@ -255,32 +255,29 @@ const char index_html[] PROGMEM = R"rawliteral(
           <div class="card" id="security-card">
             <div class="section-title">Seguridad</div>
             <div class="hint">Maestro fijo: <b>admin / admin</b>. Tiene acceso total y no se puede borrar desde la web.</div>
+            <div class="hint" id="operator-status">Operador actual: sin configurar.</div>
             <label for="operator-user">Usuario operador</label><input id="operator-user" type="text" autocomplete="off" placeholder="Configura todo menos OTA">
             <label for="operator-password">Clave operador</label><input id="operator-password" type="password" autocomplete="new-password" placeholder="Nueva clave del operador">
             <div class="inline">
               <button class="btn" onclick="saveOperatorAccount()">Guardar operador</button>
               <button class="btn" onclick="clearOperatorAccount()">Eliminar operador</button>
             </div>
-            <div class="hint">El operador puede entrar en configuracion, cambiar WiFi, hora, seguridad y borrar archivos. No puede usar OTA.</div>
+            <div class="hint">El operador puede entrar en configuracion, cambiar WiFi, hora, seguridad y borrar archivos. No puede usar OTA. Si dejas el mismo usuario y escribes una clave nueva, actualizas su clave.</div>
             <hr style="border-color:rgba(255,255,255,0.08); margin:16px 0;">
-            <label for="viewer1-user">Solo lectura 1</label><input id="viewer1-user" type="text" autocomplete="off" placeholder="Usuario para ver graficos y bajar archivos">
-            <label for="viewer1-password">Clave solo lectura 1</label><input id="viewer1-password" type="password" autocomplete="new-password" placeholder="Clave del usuario 1">
+            <div class="hint" id="viewer-summary">Lectores configurados: ninguno.</div>
+            <label for="viewer-slot">Lector a editar</label>
+            <select id="viewer-slot" onchange="refreshViewerEditor()">
+              <option value="1">Lector 1</option>
+              <option value="2">Lector 2</option>
+              <option value="3">Lector 3</option>
+            </select>
+            <label for="viewer-user">Usuario del lector</label><input id="viewer-user" type="text" autocomplete="off" placeholder="Usuario para ver graficos y bajar archivos">
+            <label for="viewer-password">Clave del lector</label><input id="viewer-password" type="password" autocomplete="new-password" placeholder="Clave del lector">
             <div class="inline">
-              <button class="btn" onclick="saveViewerAccount(1)">Guardar usuario 1</button>
-              <button class="btn" onclick="clearViewerAccount(1)">Eliminar usuario 1</button>
+              <button class="btn" onclick="saveSelectedViewerAccount()">Guardar lector</button>
+              <button class="btn" onclick="clearSelectedViewerAccount()">Eliminar lector</button>
             </div>
-            <label for="viewer2-user">Solo lectura 2</label><input id="viewer2-user" type="text" autocomplete="off" placeholder="Segundo usuario de solo lectura">
-            <label for="viewer2-password">Clave solo lectura 2</label><input id="viewer2-password" type="password" autocomplete="new-password" placeholder="Clave del usuario 2">
-            <div class="inline">
-              <button class="btn" onclick="saveViewerAccount(2)">Guardar usuario 2</button>
-              <button class="btn" onclick="clearViewerAccount(2)">Eliminar usuario 2</button>
-            </div>
-            <label for="viewer3-user">Solo lectura 3</label><input id="viewer3-user" type="text" autocomplete="off" placeholder="Tercer usuario de solo lectura">
-            <label for="viewer3-password">Clave solo lectura 3</label><input id="viewer3-password" type="password" autocomplete="new-password" placeholder="Clave del usuario 3">
-            <div class="inline">
-              <button class="btn" onclick="saveViewerAccount(3)">Guardar usuario 3</button>
-              <button class="btn" onclick="clearViewerAccount(3)">Eliminar usuario 3</button>
-            </div>
+            <div class="hint">Selecciona el lector 1, 2 o 3. Si ya existe, se muestra el nombre actual. Para cambiar solo la clave, deja el mismo usuario y escribe una clave nueva.</div>
             <div class="message" id="msg-auth"></div>
           </div>
         </div>
@@ -292,10 +289,29 @@ const char index_html[] PROGMEM = R"rawliteral(
     const dataHistory = { co: [], h2s: [], o2: [], ch4: [], co2: [] };
     const graphLimit = 50;
     const session = { authHeader: "", role: "none", canViewData: false, canManageConfig: false, canManageSecurity: false, canDeleteFiles: false, canManageOta: false };
+    const viewerUsers = ["", "", ""];
 
     function buildAuthHeader(user, password) { return "Basic " + btoa(user + ":" + password); }
     function setMessage(id, text) { document.getElementById(id).innerText = text; }
     function roleLabel(role) { return role === "master" ? "Maestro" : role === "operator" ? "Operador" : role === "viewer" ? "Solo lectura" : "Sin sesion"; }
+
+    function updateOperatorStatus() {
+      const user = document.getElementById("operator-user").value.trim();
+      document.getElementById("operator-status").innerText = user ? "Operador actual: " + user : "Operador actual: sin configurar.";
+    }
+
+    function updateViewerSummary() {
+      const summary = viewerUsers.map((user, index) => user ? ("Lector " + (index + 1) + ": " + user) : ("Lector " + (index + 1) + ": libre"));
+      document.getElementById("viewer-summary").innerText = "Lectores configurados: " + summary.join(" | ");
+    }
+
+    function refreshViewerEditor(clearPassword = true) {
+      const slot = Number(document.getElementById("viewer-slot").value || 1);
+      document.getElementById("viewer-user").value = viewerUsers[slot - 1] || "";
+      if (clearPassword) {
+        document.getElementById("viewer-password").value = "";
+      }
+    }
 
     function applySessionUi() {
       document.getElementById("role-chip").innerText = "Rol: " + roleLabel(session.role);
@@ -498,13 +514,13 @@ const char index_html[] PROGMEM = R"rawliteral(
         document.getElementById("cfg-purge").value = data.purge;
         document.getElementById("wifi-ssid").value = data.wifiSSID || "";
         document.getElementById("operator-user").value = data.operatorUser || "";
-        document.getElementById("viewer1-user").value = data.viewer1User || "";
-        document.getElementById("viewer2-user").value = data.viewer2User || "";
-        document.getElementById("viewer3-user").value = data.viewer3User || "";
         document.getElementById("operator-password").value = "";
-        document.getElementById("viewer1-password").value = "";
-        document.getElementById("viewer2-password").value = "";
-        document.getElementById("viewer3-password").value = "";
+        viewerUsers[0] = data.viewer1User || "";
+        viewerUsers[1] = data.viewer2User || "";
+        viewerUsers[2] = data.viewer3User || "";
+        updateOperatorStatus();
+        updateViewerSummary();
+        refreshViewerEditor();
         document.getElementById("ota-enabled").checked = !!data.otaEnabled;
         document.getElementById("ota-manifest").value = data.otaManifestUrl || "";
         setMessage("msg-ota", "Version actual: " + data.firmwareVersion + "\nBuild: " + data.buildStamp + "\nReset: " + data.resetReason + "\nUltimo estado OTA: " + data.otaStatus + "\nUltimo chequeo: " + data.otaLastCheck + "\nVersion disponible: " + data.otaAvailableVersion);
@@ -564,6 +580,11 @@ const char index_html[] PROGMEM = R"rawliteral(
       try {
         const response = await authenticatedFetch("/security/operator/save", { method: "POST", body: params });
         setMessage("msg-auth", await response.text());
+        if (session.role === "operator") {
+          session.authHeader = buildAuthHeader(user, password);
+          document.getElementById("login-user").value = user;
+          document.getElementById("login-password").value = "";
+        }
         document.getElementById("operator-password").value = "";
         await loadProtectedConfig();
       } catch (error) { setMessage("msg-auth", error.message); }
@@ -573,17 +594,27 @@ const char index_html[] PROGMEM = R"rawliteral(
       try {
         const response = await authenticatedFetch("/security/operator/clear", { method: "POST" });
         setMessage("msg-auth", await response.text());
+        if (session.role === "operator") {
+          resetSession();
+          document.getElementById("login-user").value = "admin";
+          document.getElementById("login-password").value = "";
+          document.getElementById("login-overlay").classList.remove("hidden");
+          setMessage("msg-login", "Operador eliminado. Ingresa nuevamente con admin / admin.");
+          return;
+        }
         document.getElementById("operator-user").value = "";
         document.getElementById("operator-password").value = "";
+        updateOperatorStatus();
         await loadProtectedConfig();
       } catch (error) { setMessage("msg-auth", error.message); }
     }
 
-    async function saveViewerAccount(slot) {
-      const user = document.getElementById("viewer" + slot + "-user").value.trim();
-      const password = document.getElementById("viewer" + slot + "-password").value.trim();
+    async function saveSelectedViewerAccount() {
+      const slot = Number(document.getElementById("viewer-slot").value || 1);
+      const user = document.getElementById("viewer-user").value.trim();
+      const password = document.getElementById("viewer-password").value.trim();
       if (!user || !password) {
-        setMessage("msg-auth", "Completa usuario y clave para el usuario " + slot + ".");
+        setMessage("msg-auth", "Completa usuario y clave para el lector " + slot + ".");
         return;
       }
       const params = new URLSearchParams();
@@ -591,19 +622,21 @@ const char index_html[] PROGMEM = R"rawliteral(
       try {
         const response = await authenticatedFetch("/security/viewer/save", { method: "POST", body: params });
         setMessage("msg-auth", await response.text());
-        document.getElementById("viewer" + slot + "-password").value = "";
+        document.getElementById("viewer-password").value = "";
         await loadProtectedConfig();
       } catch (error) { setMessage("msg-auth", error.message); }
     }
 
-    async function clearViewerAccount(slot) {
+    async function clearSelectedViewerAccount() {
+      const slot = Number(document.getElementById("viewer-slot").value || 1);
       const params = new URLSearchParams();
       params.set("slot", String(slot));
       try {
         const response = await authenticatedFetch("/security/viewer/clear", { method: "POST", body: params });
         setMessage("msg-auth", await response.text());
-        document.getElementById("viewer" + slot + "-user").value = "";
-        document.getElementById("viewer" + slot + "-password").value = "";
+        viewerUsers[slot - 1] = "";
+        refreshViewerEditor();
+        updateViewerSummary();
         await loadProtectedConfig();
       } catch (error) { setMessage("msg-auth", error.message); }
     }
