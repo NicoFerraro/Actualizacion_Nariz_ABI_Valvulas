@@ -2,7 +2,7 @@
 #include "web_ui.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.2"
+#define APP_VERSION "0.2.3"
 #endif
 
 #ifndef BUILD_STAMP
@@ -14,6 +14,8 @@ namespace {
 constexpr uint32_t kMinDurationMs = 30000UL;
 constexpr uint32_t kMaxDurationMs = 86400000UL;
 constexpr uint32_t kOtaCheckIntervalMs = 3600000UL;
+constexpr char kMasterUser[] = "admin";
+constexpr char kMasterPassword[] = "admin";
 
 }
 
@@ -56,12 +58,160 @@ bool AppRuntime::parseSecondsParam(AsyncWebServerRequest* request, const char* n
   return true;
 }
 
-bool AppRuntime::ensureAuthenticated(AsyncWebServerRequest* request) {
-  if (!request->authenticate(runtimeConfig.adminUser.c_str(), runtimeConfig.adminPassword.c_str())) {
+bool AppRuntime::isAccountConfigured(const UserAccount& account) {
+  return !account.username.isEmpty() && !account.password.isEmpty();
+}
+
+bool AppRuntime::userNamesEqual(const String& left, const String& right) {
+  return left.equalsIgnoreCase(right);
+}
+
+bool AppRuntime::validateUserAccount(const String& username, const String& password, bool allowEmpty, String& error) {
+  String trimmedUser = username;
+  String trimmedPassword = password;
+  trimmedUser.trim();
+  trimmedPassword.trim();
+
+  if (trimmedUser.isEmpty() && trimmedPassword.isEmpty() && allowEmpty) {
+    return true;
+  }
+
+  if (trimmedUser.isEmpty() || trimmedPassword.isEmpty()) {
+    error = "Usuario y clave deben completarse juntos";
+    return false;
+  }
+
+  if (trimmedUser.indexOf(':') >= 0) {
+    error = "El usuario no puede contener ':'";
+    return false;
+  }
+
+  if (trimmedUser.equalsIgnoreCase(kMasterUser)) {
+    error = "El usuario admin esta reservado como acceso maestro";
+    return false;
+  }
+
+  return true;
+}
+
+bool AppRuntime::validateSecurityConfig(String& error) {
+  if (isAccountConfigured(runtimeConfig.operatorAccount)) {
+    if (!validateUserAccount(runtimeConfig.operatorAccount.username, runtimeConfig.operatorAccount.password, true, error)) {
+      return false;
+    }
+  }
+
+  for (size_t i = 0; i < kViewerAccountCount; ++i) {
+    if (!isAccountConfigured(runtimeConfig.viewerAccounts[i])) {
+      continue;
+    }
+
+    if (!validateUserAccount(runtimeConfig.viewerAccounts[i].username, runtimeConfig.viewerAccounts[i].password, true, error)) {
+      return false;
+    }
+  }
+
+  if (isAccountConfigured(runtimeConfig.operatorAccount)) {
+    for (size_t i = 0; i < kViewerAccountCount; ++i) {
+      if (isAccountConfigured(runtimeConfig.viewerAccounts[i]) &&
+          userNamesEqual(runtimeConfig.operatorAccount.username, runtimeConfig.viewerAccounts[i].username)) {
+        error = "El usuario operador no puede repetirse con un usuario de solo lectura";
+        return false;
+      }
+    }
+  }
+
+  for (size_t i = 0; i < kViewerAccountCount; ++i) {
+    if (!isAccountConfigured(runtimeConfig.viewerAccounts[i])) {
+      continue;
+    }
+
+    for (size_t j = i + 1; j < kViewerAccountCount; ++j) {
+      if (isAccountConfigured(runtimeConfig.viewerAccounts[j]) &&
+          userNamesEqual(runtimeConfig.viewerAccounts[i].username, runtimeConfig.viewerAccounts[j].username)) {
+        error = "No puede haber dos usuarios de solo lectura con el mismo nombre";
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+AppRuntime::AccessRole AppRuntime::authenticateRequest(AsyncWebServerRequest* request) {
+  if (request->authenticate(kMasterUser, kMasterPassword)) {
+    return AccessRole::Master;
+  }
+
+  if (isAccountConfigured(runtimeConfig.operatorAccount) &&
+      request->authenticate(runtimeConfig.operatorAccount.username.c_str(), runtimeConfig.operatorAccount.password.c_str())) {
+    return AccessRole::Operator;
+  }
+
+  for (size_t i = 0; i < kViewerAccountCount; ++i) {
+    if (isAccountConfigured(runtimeConfig.viewerAccounts[i]) &&
+        request->authenticate(runtimeConfig.viewerAccounts[i].username.c_str(), runtimeConfig.viewerAccounts[i].password.c_str())) {
+      return AccessRole::Viewer;
+    }
+  }
+
+  return AccessRole::None;
+}
+
+bool AppRuntime::hasPermission(AccessRole role, Permission permission) {
+  switch (permission) {
+    case Permission::ViewData:
+      return role == AccessRole::Viewer || role == AccessRole::Operator || role == AccessRole::Master;
+    case Permission::ManageConfig:
+    case Permission::ManageSecurity:
+    case Permission::DeleteFiles:
+      return role == AccessRole::Operator || role == AccessRole::Master;
+    case Permission::ManageOta:
+      return role == AccessRole::Master;
+  }
+
+  return false;
+}
+
+bool AppRuntime::ensurePermission(AsyncWebServerRequest* request, Permission permission, AccessRole* role) {
+  const AccessRole resolvedRole = authenticateRequest(request);
+  if (role != nullptr) {
+    *role = resolvedRole;
+  }
+
+  if (!hasPermission(resolvedRole, permission)) {
     request->requestAuthentication();
     return false;
   }
+
   return true;
+}
+
+String AppRuntime::getRoleName(AccessRole role) {
+  switch (role) {
+    case AccessRole::Viewer:
+      return "viewer";
+    case AccessRole::Operator:
+      return "operator";
+    case AccessRole::Master:
+      return "master";
+    case AccessRole::None:
+    default:
+      return "none";
+  }
+}
+
+String AppRuntime::buildAuthJson(AccessRole role) {
+  String json = "{";
+  json += "\"role\":\"" + jsonEscape(getRoleName(role)) + "\"";
+  json += ",\"canViewData\":" + String(hasPermission(role, Permission::ViewData) ? "true" : "false");
+  json += ",\"canManageConfig\":" + String(hasPermission(role, Permission::ManageConfig) ? "true" : "false");
+  json += ",\"canManageSecurity\":" + String(hasPermission(role, Permission::ManageSecurity) ? "true" : "false");
+  json += ",\"canDeleteFiles\":" + String(hasPermission(role, Permission::DeleteFiles) ? "true" : "false");
+  json += ",\"canManageOta\":" + String(hasPermission(role, Permission::ManageOta) ? "true" : "false");
+  json += ",\"masterUser\":\"" + jsonEscape(String(kMasterUser)) + "\"";
+  json += "}";
+  return json;
 }
 
 String AppRuntime::sanitizeCsvFileName(const String& rawName) {
@@ -87,7 +237,10 @@ String AppRuntime::buildConfigJson() {
   json += ",\"v4\":" + String(runtimeConfig.sampleTimeMs[3] / 1000UL);
   json += ",\"purge\":" + String(runtimeConfig.purgeTimeMs / 1000UL);
   json += ",\"wifiSSID\":\"" + jsonEscape(runtimeConfig.wifiSsid) + "\"";
-  json += ",\"adminUser\":\"" + jsonEscape(runtimeConfig.adminUser) + "\"";
+  json += ",\"operatorUser\":\"" + jsonEscape(runtimeConfig.operatorAccount.username) + "\"";
+  json += ",\"viewer1User\":\"" + jsonEscape(runtimeConfig.viewerAccounts[0].username) + "\"";
+  json += ",\"viewer2User\":\"" + jsonEscape(runtimeConfig.viewerAccounts[1].username) + "\"";
+  json += ",\"viewer3User\":\"" + jsonEscape(runtimeConfig.viewerAccounts[2].username) + "\"";
   json += ",\"otaEnabled\":" + String(runtimeConfig.otaEnabled ? "true" : "false");
   json += ",\"otaManifestUrl\":\"" + jsonEscape(runtimeConfig.otaManifestUrl) + "\"";
   json += ",\"firmwareVersion\":\"" + jsonEscape(String(APP_VERSION)) + "\"";
@@ -430,19 +583,30 @@ void AppRuntime::setupWebServer() {
     request->send(200, "text/html", index_html);
   });
 
+  server.on("/auth/session", HTTP_GET, [this](AsyncWebServerRequest* request) {
+    AccessRole role = AccessRole::None;
+    if (!ensurePermission(request, Permission::ViewData, &role)) {
+      return;
+    }
+    request->send(200, "application/json", buildAuthJson(role));
+  });
+
   server.on("/data", HTTP_GET, [this](AsyncWebServerRequest* request) {
+    if (!ensurePermission(request, Permission::ViewData)) {
+      return;
+    }
     request->send(200, "application/json", buildDataJson());
   });
 
   server.on("/config", HTTP_GET, [this](AsyncWebServerRequest* request) {
-    if (!ensureAuthenticated(request)) {
+    if (!ensurePermission(request, Permission::ManageConfig)) {
       return;
     }
     request->send(200, "application/json", buildConfigJson());
   });
 
   server.on("/config/save", HTTP_POST, [this](AsyncWebServerRequest* request) {
-    if (!ensureAuthenticated(request)) {
+    if (!ensurePermission(request, Permission::ManageConfig)) {
       return;
     }
 
@@ -480,7 +644,7 @@ void AppRuntime::setupWebServer() {
   });
 
   server.on("/wifi/save", HTTP_POST, [this](AsyncWebServerRequest* request) {
-    if (!ensureAuthenticated(request)) {
+    if (!ensurePermission(request, Permission::ManageConfig)) {
       return;
     }
 
@@ -498,8 +662,8 @@ void AppRuntime::setupWebServer() {
     request->send(200, "text/plain", "WiFi guardado. Intentando conectar.");
   });
 
-  server.on("/security/save", HTTP_POST, [this](AsyncWebServerRequest* request) {
-    if (!ensureAuthenticated(request)) {
+  server.on("/security/operator/save", HTTP_POST, [this](AsyncWebServerRequest* request) {
+    if (!ensurePermission(request, Permission::ManageSecurity)) {
       return;
     }
 
@@ -512,19 +676,99 @@ void AppRuntime::setupWebServer() {
     String newPassword = request->getParam("password", true)->value();
     newUser.trim();
     newPassword.trim();
-    if (newUser.isEmpty() || newPassword.isEmpty()) {
-      request->send(400, "text/plain", "Usuario y clave no pueden estar vacios");
+    String error;
+    if (!validateUserAccount(newUser, newPassword, false, error)) {
+      request->send(400, "text/plain", error);
       return;
     }
 
-    runtimeConfig.adminUser = newUser;
-    runtimeConfig.adminPassword = newPassword;
+    const UserAccount previousOperatorAccount = runtimeConfig.operatorAccount;
+    runtimeConfig.operatorAccount.username = newUser;
+    runtimeConfig.operatorAccount.password = newPassword;
+    if (!validateSecurityConfig(error)) {
+      runtimeConfig.operatorAccount = previousOperatorAccount;
+      request->send(400, "text/plain", error);
+      return;
+    }
     saveSecurityConfig();
-    request->send(200, "text/plain", "Credenciales actualizadas");
+    request->send(200, "text/plain", "Usuario operador actualizado");
+  });
+
+  server.on("/security/operator/clear", HTTP_POST, [this](AsyncWebServerRequest* request) {
+    if (!ensurePermission(request, Permission::ManageSecurity)) {
+      return;
+    }
+
+    runtimeConfig.operatorAccount.username = "";
+    runtimeConfig.operatorAccount.password = "";
+    saveSecurityConfig();
+    request->send(200, "text/plain", "Usuario operador eliminado");
+  });
+
+  server.on("/security/viewer/save", HTTP_POST, [this](AsyncWebServerRequest* request) {
+    if (!ensurePermission(request, Permission::ManageSecurity)) {
+      return;
+    }
+
+    if (!request->hasParam("slot", true) || !request->hasParam("user", true) || !request->hasParam("password", true)) {
+      request->send(400, "text/plain", "Faltan datos del usuario");
+      return;
+    }
+
+    const int slot = request->getParam("slot", true)->value().toInt();
+    if (slot < 1 || slot > static_cast<int>(kViewerAccountCount)) {
+      request->send(400, "text/plain", "Slot de usuario invalido");
+      return;
+    }
+
+    String newUser = request->getParam("user", true)->value();
+    String newPassword = request->getParam("password", true)->value();
+    newUser.trim();
+    newPassword.trim();
+
+    String error;
+    if (!validateUserAccount(newUser, newPassword, false, error)) {
+      request->send(400, "text/plain", error);
+      return;
+    }
+
+    const UserAccount previousViewerAccount = runtimeConfig.viewerAccounts[slot - 1];
+    runtimeConfig.viewerAccounts[slot - 1].username = newUser;
+    runtimeConfig.viewerAccounts[slot - 1].password = newPassword;
+    if (!validateSecurityConfig(error)) {
+      runtimeConfig.viewerAccounts[slot - 1] = previousViewerAccount;
+      request->send(400, "text/plain", error);
+      return;
+    }
+
+    saveSecurityConfig();
+    request->send(200, "text/plain", "Usuario de solo lectura guardado");
+  });
+
+  server.on("/security/viewer/clear", HTTP_POST, [this](AsyncWebServerRequest* request) {
+    if (!ensurePermission(request, Permission::ManageSecurity)) {
+      return;
+    }
+
+    if (!request->hasParam("slot", true)) {
+      request->send(400, "text/plain", "Falta slot del usuario");
+      return;
+    }
+
+    const int slot = request->getParam("slot", true)->value().toInt();
+    if (slot < 1 || slot > static_cast<int>(kViewerAccountCount)) {
+      request->send(400, "text/plain", "Slot de usuario invalido");
+      return;
+    }
+
+    runtimeConfig.viewerAccounts[slot - 1].username = "";
+    runtimeConfig.viewerAccounts[slot - 1].password = "";
+    saveSecurityConfig();
+    request->send(200, "text/plain", "Usuario de solo lectura eliminado");
   });
 
   server.on("/time/set", HTTP_POST, [this](AsyncWebServerRequest* request) {
-    if (!ensureAuthenticated(request)) {
+    if (!ensurePermission(request, Permission::ManageConfig)) {
       return;
     }
 
@@ -548,7 +792,7 @@ void AppRuntime::setupWebServer() {
   });
 
   server.on("/ota/save", HTTP_POST, [this](AsyncWebServerRequest* request) {
-    if (!ensureAuthenticated(request)) {
+    if (!ensurePermission(request, Permission::ManageOta)) {
       return;
     }
 
@@ -568,7 +812,7 @@ void AppRuntime::setupWebServer() {
   });
 
   server.on("/ota/check", HTTP_POST, [this](AsyncWebServerRequest* request) {
-    if (!ensureAuthenticated(request)) {
+    if (!ensurePermission(request, Permission::ManageOta)) {
       return;
     }
 
@@ -577,6 +821,9 @@ void AppRuntime::setupWebServer() {
   });
 
   server.on("/list", HTTP_GET, [this](AsyncWebServerRequest* request) {
+    if (!ensurePermission(request, Permission::ViewData)) {
+      return;
+    }
     String output = "[";
     File root = SD.open("/");
     if (!root) {
@@ -601,6 +848,9 @@ void AppRuntime::setupWebServer() {
   });
 
   server.on("/get", HTTP_GET, [this](AsyncWebServerRequest* request) {
+    if (!ensurePermission(request, Permission::ViewData)) {
+      return;
+    }
     if (!request->hasParam("file")) {
       request->send(400, "text/plain", "Falta nombre de archivo");
       return;
@@ -616,11 +866,14 @@ void AppRuntime::setupWebServer() {
   });
 
   server.on("/download", HTTP_GET, [this](AsyncWebServerRequest* request) {
+    if (!ensurePermission(request, Permission::ViewData)) {
+      return;
+    }
     request->send(SD, getFileName(), "text/csv");
   });
 
   server.on("/delete", HTTP_POST, [this](AsyncWebServerRequest* request) {
-    if (!ensureAuthenticated(request)) {
+    if (!ensurePermission(request, Permission::DeleteFiles)) {
       return;
     }
 

@@ -105,12 +105,56 @@ const char index_html[] PROGMEM = R"rawliteral(
     table { width:100%; border-collapse:collapse; }
     td, th { padding:10px 8px; border-bottom:1px solid rgba(255,255,255,0.08); text-align:left; }
     .link { color:var(--accent); text-decoration:none; font-weight:600; }
+    .hidden { display:none !important; }
+    .login-overlay {
+      position:fixed;
+      inset:0;
+      background:rgba(2, 10, 14, 0.88);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding:18px;
+      z-index:1000;
+      backdrop-filter:blur(10px);
+    }
+    .login-card {
+      width:min(420px, 100%);
+      background:linear-gradient(180deg, rgba(16, 33, 44, 0.98), rgba(10, 24, 32, 0.98));
+      border:1px solid var(--line);
+      border-radius:20px;
+      padding:22px;
+      box-shadow:0 24px 50px rgba(0,0,0,0.34);
+    }
+    .login-card h2 { margin:0 0 8px 0; text-transform:uppercase; letter-spacing:0.08em; }
+    .login-actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:8px; }
+    .role-chip {
+      display:inline-flex;
+      align-items:center;
+      padding:9px 12px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,0.1);
+      background:rgba(255,255,255,0.05);
+      color:var(--muted);
+      font-size:0.9rem;
+    }
     @media (max-width: 860px) {
       .hero { grid-template-columns:1fr; }
     }
   </style>
 </head>
 <body>
+  <div id="login-overlay" class="login-overlay">
+    <div class="login-card">
+      <h2>Ingresar</h2>
+      <div class="hint">Identificate para usar la nariz. El acceso maestro fijo es <b>admin / admin</b>.</div>
+      <label for="login-user">Usuario</label><input id="login-user" type="text" autocomplete="username" value="admin">
+      <label for="login-password">Clave</label><input id="login-password" type="password" autocomplete="current-password" value="admin">
+      <div class="login-actions">
+        <button class="btn" onclick="login()">Entrar</button>
+      </div>
+      <div class="message" id="msg-login">Esperando credenciales.</div>
+    </div>
+  </div>
   <div class="shell">
     <div class="header">
       <div class="title">
@@ -118,9 +162,11 @@ const char index_html[] PROGMEM = R"rawliteral(
         <div class="subtitle" id="date-display">Sin datos de reloj</div>
       </div>
       <div class="nav">
+        <div class="role-chip" id="role-chip">Sin sesion</div>
         <button onclick="showView('main')">Graficos</button>
         <button onclick="showView('files')">Archivos</button>
-        <button onclick="showView('config')">Configuracion</button>
+        <button id="nav-config" onclick="showView('config')">Configuracion</button>
+        <button onclick="logout()">Salir</button>
       </div>
     </div>
 
@@ -159,7 +205,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       <div id="view-files" class="view">
         <div class="card">
           <div class="section-title">Archivos en la SD</div>
-          <div class="hint">Los archivos se pueden descargar sin autenticacion. El borrado pide usuario y clave.</div>
+          <div class="hint">Los usuarios de solo lectura pueden descargar archivos. Solo operador y maestro pueden borrarlos.</div>
           <div id="file-list" class="message">Cargando lista...</div>
         </div>
       </div>
@@ -196,6 +242,7 @@ const char index_html[] PROGMEM = R"rawliteral(
           </div>
           <div class="card">
             <div class="section-title">OTA remota</div>
+            <div class="hint">Solo el usuario maestro puede cambiar o ejecutar OTA.</div>
             <label class="inline"><input id="ota-enabled" type="checkbox">Habilitar chequeo OTA cada 1 hora</label>
             <label for="ota-manifest">URL del manifest OTA</label><input id="ota-manifest" type="text" placeholder="https://.../manifest.txt">
             <div class="hint">El manifest debe tener: version=, firmware_url= y sha256=. Cuando aparezca una version mas nueva, el equipo la instala solo.</div>
@@ -205,12 +252,35 @@ const char index_html[] PROGMEM = R"rawliteral(
             </div>
             <div class="message" id="msg-ota"></div>
           </div>
-          <div class="card">
+          <div class="card" id="security-card">
             <div class="section-title">Seguridad</div>
-            <label for="auth-user">Usuario</label><input id="auth-user" type="text" autocomplete="off">
-            <label for="auth-password">Clave</label><input id="auth-password" type="password" autocomplete="new-password" placeholder="Nueva clave">
-            <div class="hint">Protege configuracion, cambio de WiFi, borrado de archivos, ajuste de hora y OTA.</div>
-            <button class="btn" onclick="saveSecurityConfig()">Guardar usuario y clave</button>
+            <div class="hint">Maestro fijo: <b>admin / admin</b>. Tiene acceso total y no se puede borrar desde la web.</div>
+            <label for="operator-user">Usuario operador</label><input id="operator-user" type="text" autocomplete="off" placeholder="Configura todo menos OTA">
+            <label for="operator-password">Clave operador</label><input id="operator-password" type="password" autocomplete="new-password" placeholder="Nueva clave del operador">
+            <div class="inline">
+              <button class="btn" onclick="saveOperatorAccount()">Guardar operador</button>
+              <button class="btn" onclick="clearOperatorAccount()">Eliminar operador</button>
+            </div>
+            <div class="hint">El operador puede entrar en configuracion, cambiar WiFi, hora, seguridad y borrar archivos. No puede usar OTA.</div>
+            <hr style="border-color:rgba(255,255,255,0.08); margin:16px 0;">
+            <label for="viewer1-user">Solo lectura 1</label><input id="viewer1-user" type="text" autocomplete="off" placeholder="Usuario para ver graficos y bajar archivos">
+            <label for="viewer1-password">Clave solo lectura 1</label><input id="viewer1-password" type="password" autocomplete="new-password" placeholder="Clave del usuario 1">
+            <div class="inline">
+              <button class="btn" onclick="saveViewerAccount(1)">Guardar usuario 1</button>
+              <button class="btn" onclick="clearViewerAccount(1)">Eliminar usuario 1</button>
+            </div>
+            <label for="viewer2-user">Solo lectura 2</label><input id="viewer2-user" type="text" autocomplete="off" placeholder="Segundo usuario de solo lectura">
+            <label for="viewer2-password">Clave solo lectura 2</label><input id="viewer2-password" type="password" autocomplete="new-password" placeholder="Clave del usuario 2">
+            <div class="inline">
+              <button class="btn" onclick="saveViewerAccount(2)">Guardar usuario 2</button>
+              <button class="btn" onclick="clearViewerAccount(2)">Eliminar usuario 2</button>
+            </div>
+            <label for="viewer3-user">Solo lectura 3</label><input id="viewer3-user" type="text" autocomplete="off" placeholder="Tercer usuario de solo lectura">
+            <label for="viewer3-password">Clave solo lectura 3</label><input id="viewer3-password" type="password" autocomplete="new-password" placeholder="Clave del usuario 3">
+            <div class="inline">
+              <button class="btn" onclick="saveViewerAccount(3)">Guardar usuario 3</button>
+              <button class="btn" onclick="clearViewerAccount(3)">Eliminar usuario 3</button>
+            </div>
             <div class="message" id="msg-auth"></div>
           </div>
         </div>
@@ -221,47 +291,82 @@ const char index_html[] PROGMEM = R"rawliteral(
   <script>
     const dataHistory = { co: [], h2s: [], o2: [], ch4: [], co2: [] };
     const graphLimit = 50;
-    let authHeader = "";
-    let currentAuthUser = "";
-    let currentAuthPassword = "";
+    const session = { authHeader: "", role: "none", canViewData: false, canManageConfig: false, canManageSecurity: false, canDeleteFiles: false, canManageOta: false };
 
-    function buildAuthHeader(user, password) {
-      return "Basic " + btoa(user + ":" + password);
+    function buildAuthHeader(user, password) { return "Basic " + btoa(user + ":" + password); }
+    function setMessage(id, text) { document.getElementById(id).innerText = text; }
+    function roleLabel(role) { return role === "master" ? "Maestro" : role === "operator" ? "Operador" : role === "viewer" ? "Solo lectura" : "Sin sesion"; }
+
+    function applySessionUi() {
+      document.getElementById("role-chip").innerText = "Rol: " + roleLabel(session.role);
+      document.getElementById("nav-config").classList.toggle("hidden", !session.canManageConfig);
+      document.getElementById("security-card").classList.toggle("hidden", !session.canManageSecurity);
+      document.getElementById("ota-enabled").closest(".card").classList.toggle("hidden", !session.canManageOta);
+      if (!session.canManageConfig && document.getElementById("view-config").classList.contains("active")) showView("main");
     }
 
-    async function promptSensitiveAuth() {
-      const user = prompt("Usuario de configuracion:", currentAuthUser || "admin");
-      if (user === null) return false;
-      const password = prompt("Clave de configuracion:", currentAuthPassword || "admin");
-      if (password === null) return false;
-      currentAuthUser = user;
-      currentAuthPassword = password;
-      authHeader = buildAuthHeader(user, password);
-      return true;
+    function resetSession() {
+      session.authHeader = "";
+      session.role = "none";
+      session.canViewData = false;
+      session.canManageConfig = false;
+      session.canManageSecurity = false;
+      session.canDeleteFiles = false;
+      session.canManageOta = false;
+      applySessionUi();
     }
 
-    async function sensitiveFetch(url, options = {}) {
+    async function authenticatedFetch(url, options = {}) {
+      if (!session.authHeader) throw new Error("Debes iniciar sesion");
       const opts = { ...options };
-      opts.headers = { ...(options.headers || {}) };
-      if (!authHeader) {
-        const ok = await promptSensitiveAuth();
-        if (!ok) throw new Error("Autenticacion cancelada");
-      }
-      opts.headers.Authorization = authHeader;
-      let response = await fetch(url, opts);
+      opts.headers = { ...(options.headers || {}), Authorization: session.authHeader };
+      const response = await fetch(url, opts);
       if (response.status === 401) {
-        authHeader = "";
-        const ok = await promptSensitiveAuth();
-        if (!ok) throw new Error("Autenticacion cancelada");
-        opts.headers.Authorization = authHeader;
-        response = await fetch(url, opts);
+        resetSession();
+        document.getElementById("login-overlay").classList.remove("hidden");
+        throw new Error("Credenciales invalidas o sin permiso");
       }
-      if (response.status === 401) throw new Error("Credenciales invalidas");
       return response;
     }
 
-    function setMessage(id, text) {
-      document.getElementById(id).innerText = text;
+    async function login() {
+      const user = document.getElementById("login-user").value.trim();
+      const password = document.getElementById("login-password").value.trim();
+      if (!user || !password) {
+        setMessage("msg-login", "Completa usuario y clave.");
+        return;
+      }
+      try {
+        const authHeader = buildAuthHeader(user, password);
+        const response = await fetch("/auth/session", { headers: { Authorization: authHeader } });
+        if (response.status === 401) {
+          setMessage("msg-login", "Credenciales invalidas.");
+          return;
+        }
+        const auth = await response.json();
+        session.authHeader = authHeader;
+        session.role = auth.role || "none";
+        session.canViewData = !!auth.canViewData;
+        session.canManageConfig = !!auth.canManageConfig;
+        session.canManageSecurity = !!auth.canManageSecurity;
+        session.canDeleteFiles = !!auth.canDeleteFiles;
+        session.canManageOta = !!auth.canManageOta;
+        applySessionUi();
+        document.getElementById("login-overlay").classList.add("hidden");
+        setMessage("msg-login", "Sesion iniciada.");
+        await updateData();
+        if (session.canManageConfig) await loadProtectedConfig();
+        else showView("main");
+      } catch (error) {
+        setMessage("msg-login", error.message);
+      }
+    }
+
+    function logout() {
+      resetSession();
+      document.getElementById("login-password").value = "";
+      document.getElementById("login-overlay").classList.remove("hidden");
+      setMessage("msg-login", "Sesion cerrada.");
     }
 
     function formatSeconds(seconds) {
@@ -285,15 +390,15 @@ const char index_html[] PROGMEM = R"rawliteral(
       data.forEach((value, index) => {
         const x = (index / Math.max(graphLimit - 1, 1)) * width;
         const y = height - (value / maxValue) * height;
-        if (index === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
+        if (index === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       });
       ctx.stroke();
     }
 
     async function updateData() {
+      if (!session.canViewData) return;
       try {
-        const response = await fetch("/data");
+        const response = await authenticatedFetch("/data");
         const data = await response.json();
         document.getElementById("date-display").innerText = data.date + " - " + data.time;
         document.getElementById("state-label").innerText = data.state;
@@ -304,16 +409,12 @@ const char index_html[] PROGMEM = R"rawliteral(
         document.getElementById("wifi-ip").innerText = data.wifiSSID + " / " + data.localIP;
         document.getElementById("ap-ip").innerText = data.apIP;
         document.getElementById("firmware-version").innerText = data.firmwareVersion;
-        document.getElementById("ota-summary").innerText =
-          "OTA: " + data.otaMessage + "\nUltimo chequeo: " + data.otaLastCheck +
-          "\nVersion disponible: " + data.otaAvailableVersion + "\nBuild: " + data.buildStamp;
-
+        document.getElementById("ota-summary").innerText = "OTA: " + data.otaMessage + "\nUltimo chequeo: " + data.otaLastCheck + "\nVersion disponible: " + data.otaAvailableVersion + "\nBuild: " + data.buildStamp + "\nReset: " + data.resetReason;
         const pill = document.getElementById("pill-state");
         pill.className = "status-pill";
         if (data.state === "MUESTRA") pill.classList.add("state-sample");
         else if (data.state === "PURGA") pill.classList.add("state-purge");
         else pill.classList.add("state-idle");
-
         const keys = ["co", "h2s", "o2", "ch4", "co2"];
         const colors = { co: "#57e3a0", h2s: "#ff8b8b", o2: "#6ec4ff", ch4: "#ffd56d", co2: "#88ff9f" };
         keys.forEach((key) => {
@@ -322,12 +423,11 @@ const char index_html[] PROGMEM = R"rawliteral(
           if (dataHistory[key].length > graphLimit) dataHistory[key].shift();
           drawGraph("c-" + key, dataHistory[key], colors[key]);
         });
-      } catch (error) {
-        console.error(error);
-      }
+      } catch (error) { console.error(error); }
     }
 
     function showView(viewName) {
+      if (viewName === "config" && !session.canManageConfig) return;
       document.querySelectorAll(".view").forEach((view) => view.classList.remove("active"));
       document.getElementById("view-" + viewName).classList.add("active");
       if (viewName === "files") loadFiles();
@@ -335,21 +435,42 @@ const char index_html[] PROGMEM = R"rawliteral(
     }
 
     async function loadFiles() {
-      const response = await fetch("/list");
-      const files = await response.json();
-      if (!files.length) {
-        document.getElementById("file-list").innerHTML = "No hay archivos CSV disponibles.";
-        return;
+      try {
+        const response = await authenticatedFetch("/list");
+        const files = await response.json();
+        if (!files.length) {
+          document.getElementById("file-list").innerHTML = "No hay archivos CSV disponibles.";
+          return;
+        }
+        let html = "<table><thead><tr><th>Archivo</th><th>Tamano</th><th>Acciones</th></tr></thead><tbody>";
+        files.forEach((file) => {
+          html += "<tr><td>" + file.name + "</td><td>" + file.size + "</td><td>";
+          html += "<button class='small-btn' onclick=\"downloadFile('" + file.name.replace(/'/g, "\\'") + "')\">Descargar</button> ";
+          if (session.canDeleteFiles) html += "<button class='small-btn' onclick=\"deleteFile('" + file.name.replace(/'/g, "\\'") + "')\">Borrar</button>";
+          html += "</td></tr>";
+        });
+        html += "</tbody></table>";
+        document.getElementById("file-list").innerHTML = html;
+      } catch (error) {
+        document.getElementById("file-list").innerHTML = error.message;
       }
-      let html = "<table><thead><tr><th>Archivo</th><th>Tamano</th><th>Acciones</th></tr></thead><tbody>";
-      files.forEach((file) => {
-        html += "<tr><td>" + file.name + "</td><td>" + file.size + "</td><td>";
-        html += "<a class='link' href='/get?file=" + encodeURIComponent(file.name) + "'>Descargar</a> ";
-        html += "<button class='small-btn' onclick=\"deleteFile('" + file.name.replace(/'/g, "\\'") + "')\">Borrar</button>";
-        html += "</td></tr>";
-      });
-      html += "</tbody></table>";
-      document.getElementById("file-list").innerHTML = html;
+    }
+
+    async function downloadFile(fileName) {
+      try {
+        const response = await authenticatedFetch("/get?file=" + encodeURIComponent(fileName));
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = fileName.replace(/^\//, "");
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+      } catch (error) {
+        setMessage("msg-ota", error.message);
+      }
     }
 
     async function deleteFile(fileName) {
@@ -357,7 +478,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       try {
         const params = new URLSearchParams();
         params.set("file", fileName);
-        const response = await sensitiveFetch("/delete", { method: "POST", body: params });
+        const response = await authenticatedFetch("/delete", { method: "POST", body: params });
         setMessage("msg-ota", await response.text());
         loadFiles();
       } catch (error) {
@@ -366,8 +487,9 @@ const char index_html[] PROGMEM = R"rawliteral(
     }
 
     async function loadProtectedConfig() {
+      if (!session.canManageConfig) return;
       try {
-        const response = await sensitiveFetch("/config");
+        const response = await authenticatedFetch("/config");
         const data = await response.json();
         document.getElementById("cfg-v1").value = data.v1;
         document.getElementById("cfg-v2").value = data.v2;
@@ -375,7 +497,14 @@ const char index_html[] PROGMEM = R"rawliteral(
         document.getElementById("cfg-v4").value = data.v4;
         document.getElementById("cfg-purge").value = data.purge;
         document.getElementById("wifi-ssid").value = data.wifiSSID || "";
-        document.getElementById("auth-user").value = data.adminUser || "";
+        document.getElementById("operator-user").value = data.operatorUser || "";
+        document.getElementById("viewer1-user").value = data.viewer1User || "";
+        document.getElementById("viewer2-user").value = data.viewer2User || "";
+        document.getElementById("viewer3-user").value = data.viewer3User || "";
+        document.getElementById("operator-password").value = "";
+        document.getElementById("viewer1-password").value = "";
+        document.getElementById("viewer2-password").value = "";
+        document.getElementById("viewer3-password").value = "";
         document.getElementById("ota-enabled").checked = !!data.otaEnabled;
         document.getElementById("ota-manifest").value = data.otaManifestUrl || "";
         setMessage("msg-ota", "Version actual: " + data.firmwareVersion + "\nBuild: " + data.buildStamp + "\nReset: " + data.resetReason + "\nUltimo estado OTA: " + data.otaStatus + "\nUltimo chequeo: " + data.otaLastCheck + "\nVersion disponible: " + data.otaAvailableVersion);
@@ -384,9 +513,7 @@ const char index_html[] PROGMEM = R"rawliteral(
       }
     }
 
-    function validateValveSeconds(value) {
-      return value === 0 || (value >= 30 && value <= 86400);
-    }
+    function validateValveSeconds(value) { return value === 0 || (value >= 30 && value <= 86400); }
 
     async function saveValveConfig() {
       const v1 = Number(document.getElementById("cfg-v1").value || 0);
@@ -407,19 +534,12 @@ const char index_html[] PROGMEM = R"rawliteral(
         setMessage("msg-valves", "Con 2 o mas valvulas activas la purga debe ser de 30 a 86400 segundos.");
         return;
       }
-
       const params = new URLSearchParams();
-      params.set("v1", v1);
-      params.set("v2", v2);
-      params.set("v3", v3);
-      params.set("v4", v4);
-      params.set("purge", purge);
+      params.set("v1", v1); params.set("v2", v2); params.set("v3", v3); params.set("v4", v4); params.set("purge", purge);
       try {
-        const response = await sensitiveFetch("/config/save", { method: "POST", body: params });
+        const response = await authenticatedFetch("/config/save", { method: "POST", body: params });
         setMessage("msg-valves", await response.text());
-      } catch (error) {
-        setMessage("msg-valves", error.message);
-      }
+      } catch (error) { setMessage("msg-valves", error.message); }
     }
 
     async function saveWifiConfig() {
@@ -427,34 +547,65 @@ const char index_html[] PROGMEM = R"rawliteral(
       params.set("ssid", document.getElementById("wifi-ssid").value);
       params.set("password", document.getElementById("wifi-password").value);
       try {
-        const response = await sensitiveFetch("/wifi/save", { method: "POST", body: params });
+        const response = await authenticatedFetch("/wifi/save", { method: "POST", body: params });
         setMessage("msg-wifi", await response.text());
-      } catch (error) {
-        setMessage("msg-wifi", error.message);
-      }
+      } catch (error) { setMessage("msg-wifi", error.message); }
     }
 
-    async function saveSecurityConfig() {
-      const user = document.getElementById("auth-user").value.trim();
-      const password = document.getElementById("auth-password").value.trim();
+    async function saveOperatorAccount() {
+      const user = document.getElementById("operator-user").value.trim();
+      const password = document.getElementById("operator-password").value.trim();
       if (!user || !password) {
-        setMessage("msg-auth", "Usuario y clave son obligatorios.");
+        setMessage("msg-auth", "Completa usuario y clave del operador.");
         return;
       }
-
       const params = new URLSearchParams();
-      params.set("user", user);
-      params.set("password", password);
+      params.set("user", user); params.set("password", password);
       try {
-        const response = await sensitiveFetch("/security/save", { method: "POST", body: params });
+        const response = await authenticatedFetch("/security/operator/save", { method: "POST", body: params });
         setMessage("msg-auth", await response.text());
-        currentAuthUser = user;
-        currentAuthPassword = password;
-        authHeader = buildAuthHeader(user, password);
-        document.getElementById("auth-password").value = "";
-      } catch (error) {
-        setMessage("msg-auth", error.message);
+        document.getElementById("operator-password").value = "";
+        await loadProtectedConfig();
+      } catch (error) { setMessage("msg-auth", error.message); }
+    }
+
+    async function clearOperatorAccount() {
+      try {
+        const response = await authenticatedFetch("/security/operator/clear", { method: "POST" });
+        setMessage("msg-auth", await response.text());
+        document.getElementById("operator-user").value = "";
+        document.getElementById("operator-password").value = "";
+        await loadProtectedConfig();
+      } catch (error) { setMessage("msg-auth", error.message); }
+    }
+
+    async function saveViewerAccount(slot) {
+      const user = document.getElementById("viewer" + slot + "-user").value.trim();
+      const password = document.getElementById("viewer" + slot + "-password").value.trim();
+      if (!user || !password) {
+        setMessage("msg-auth", "Completa usuario y clave para el usuario " + slot + ".");
+        return;
       }
+      const params = new URLSearchParams();
+      params.set("slot", String(slot)); params.set("user", user); params.set("password", password);
+      try {
+        const response = await authenticatedFetch("/security/viewer/save", { method: "POST", body: params });
+        setMessage("msg-auth", await response.text());
+        document.getElementById("viewer" + slot + "-password").value = "";
+        await loadProtectedConfig();
+      } catch (error) { setMessage("msg-auth", error.message); }
+    }
+
+    async function clearViewerAccount(slot) {
+      const params = new URLSearchParams();
+      params.set("slot", String(slot));
+      try {
+        const response = await authenticatedFetch("/security/viewer/clear", { method: "POST", body: params });
+        setMessage("msg-auth", await response.text());
+        document.getElementById("viewer" + slot + "-user").value = "";
+        document.getElementById("viewer" + slot + "-password").value = "";
+        await loadProtectedConfig();
+      } catch (error) { setMessage("msg-auth", error.message); }
     }
 
     async function saveManualTime() {
@@ -469,11 +620,9 @@ const char index_html[] PROGMEM = R"rawliteral(
       params.set("epoch", Math.floor(localDate.getTime() / 1000));
       params.set("tz", localDate.getTimezoneOffset());
       try {
-        const response = await sensitiveFetch("/time/set", { method: "POST", body: params });
+        const response = await authenticatedFetch("/time/set", { method: "POST", body: params });
         setMessage("msg-time", await response.text());
-      } catch (error) {
-        setMessage("msg-time", error.message);
-      }
+      } catch (error) { setMessage("msg-time", error.message); }
     }
 
     async function syncBrowserTime() {
@@ -482,11 +631,9 @@ const char index_html[] PROGMEM = R"rawliteral(
       params.set("epoch", Math.floor(now.getTime() / 1000));
       params.set("tz", now.getTimezoneOffset());
       try {
-        const response = await sensitiveFetch("/time/set", { method: "POST", body: params });
+        const response = await authenticatedFetch("/time/set", { method: "POST", body: params });
         setMessage("msg-time", await response.text());
-      } catch (error) {
-        setMessage("msg-time", error.message);
-      }
+      } catch (error) { setMessage("msg-time", error.message); }
     }
 
     async function saveOtaConfig() {
@@ -494,24 +641,24 @@ const char index_html[] PROGMEM = R"rawliteral(
       params.set("enabled", document.getElementById("ota-enabled").checked ? "1" : "0");
       params.set("manifest_url", document.getElementById("ota-manifest").value.trim());
       try {
-        const response = await sensitiveFetch("/ota/save", { method: "POST", body: params });
+        const response = await authenticatedFetch("/ota/save", { method: "POST", body: params });
         setMessage("msg-ota", await response.text());
-      } catch (error) {
-        setMessage("msg-ota", error.message);
-      }
+      } catch (error) { setMessage("msg-ota", error.message); }
     }
 
     async function checkOtaNow() {
       try {
-        const response = await sensitiveFetch("/ota/check", { method: "POST" });
+        const response = await authenticatedFetch("/ota/check", { method: "POST" });
         setMessage("msg-ota", await response.text());
-      } catch (error) {
-        setMessage("msg-ota", error.message);
-      }
+      } catch (error) { setMessage("msg-ota", error.message); }
     }
 
+    document.getElementById("login-password").addEventListener("keydown", (event) => {
+      if (event.key === "Enter") login();
+    });
+
     setInterval(updateData, 1000);
-    updateData();
+    resetSession();
   </script>
 </body>
 </html>

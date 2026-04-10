@@ -2,7 +2,7 @@
 #include <esp_system.h>
 
 #ifndef APP_VERSION
-#define APP_VERSION "0.2.2"
+#define APP_VERSION "0.2.3"
 #endif
 
 #ifndef BUILD_STAMP
@@ -144,18 +144,33 @@ void AppRuntime::loadConfig() {
 
   runtimeConfig.wifiSsid = preferences.getString("wifi_ssid", "");
   runtimeConfig.wifiPassword = preferences.getString("wifi_pass", "");
-  runtimeConfig.adminUser = preferences.isKey("adm_user") ? preferences.getString("adm_user", kDefaultAdminUser) : kDefaultAdminUser;
-  runtimeConfig.adminPassword = preferences.isKey("adm_pass") ? preferences.getString("adm_pass", kDefaultAdminPassword) : kDefaultAdminPassword;
+
+  runtimeConfig.operatorAccount.username = "";
+  runtimeConfig.operatorAccount.password = "";
+  if (preferences.isKey("adm_user") && preferences.isKey("adm_pass")) {
+    runtimeConfig.operatorAccount.username = preferences.getString("adm_user", "");
+    runtimeConfig.operatorAccount.password = preferences.getString("adm_pass", "");
+    runtimeConfig.operatorAccount.username.trim();
+    runtimeConfig.operatorAccount.password.trim();
+    if (runtimeConfig.operatorAccount.username.equalsIgnoreCase(kDefaultAdminUser) &&
+        runtimeConfig.operatorAccount.password == kDefaultAdminPassword) {
+      runtimeConfig.operatorAccount.username = "";
+      runtimeConfig.operatorAccount.password = "";
+    }
+  }
+
+  for (size_t i = 0; i < kViewerAccountCount; ++i) {
+    const String userKey = "vw" + String(i + 1) + "_u";
+    const String passKey = "vw" + String(i + 1) + "_p";
+    runtimeConfig.viewerAccounts[i].username = preferences.isKey(userKey.c_str()) ? preferences.getString(userKey.c_str(), "") : "";
+    runtimeConfig.viewerAccounts[i].password = preferences.isKey(passKey.c_str()) ? preferences.getString(passKey.c_str(), "") : "";
+    runtimeConfig.viewerAccounts[i].username.trim();
+    runtimeConfig.viewerAccounts[i].password.trim();
+  }
+
   runtimeConfig.otaEnabled = preferences.isKey("ota_en") ? preferences.getBool("ota_en", false) : false;
   runtimeConfig.otaManifestUrl = preferences.isKey("ota_url") ? preferences.getString("ota_url", "") : "";
   preferences.end();
-
-  if (runtimeConfig.adminUser.isEmpty()) {
-    runtimeConfig.adminUser = kDefaultAdminUser;
-  }
-  if (runtimeConfig.adminPassword.isEmpty()) {
-    runtimeConfig.adminPassword = kDefaultAdminPassword;
-  }
 
   loadOtaStatus();
   finalizePendingOtaUpdate();
@@ -180,8 +195,25 @@ void AppRuntime::saveWifiConfig() {
 
 void AppRuntime::saveSecurityConfig() {
   preferences.begin(kPrefsNamespace, false);
-  preferences.putString("adm_user", runtimeConfig.adminUser);
-  preferences.putString("adm_pass", runtimeConfig.adminPassword);
+  if (isAccountConfigured(runtimeConfig.operatorAccount)) {
+    preferences.putString("adm_user", runtimeConfig.operatorAccount.username);
+    preferences.putString("adm_pass", runtimeConfig.operatorAccount.password);
+  } else {
+    preferences.remove("adm_user");
+    preferences.remove("adm_pass");
+  }
+
+  for (size_t i = 0; i < kViewerAccountCount; ++i) {
+    const String userKey = "vw" + String(i + 1) + "_u";
+    const String passKey = "vw" + String(i + 1) + "_p";
+    if (isAccountConfigured(runtimeConfig.viewerAccounts[i])) {
+      preferences.putString(userKey.c_str(), runtimeConfig.viewerAccounts[i].username);
+      preferences.putString(passKey.c_str(), runtimeConfig.viewerAccounts[i].password);
+    } else {
+      preferences.remove(userKey.c_str());
+      preferences.remove(passKey.c_str());
+    }
+  }
   preferences.end();
 }
 

@@ -1,4 +1,3 @@
-version=0.2.2
-firmware_url=https://github.com/NicoFerraro/Actualizacion_Nariz_ABI_Valvulas/releases/download/v0.2.2/firmware.bin
-sha256=B63BA5F5D9A4C5CF3153E1A32B9BB887677788A35A07C8C6A3CD2C7CFC295CEB
-
+version=0.2.3
+firmware_url=https://github.com/NicoFerraro/Actualizacion_Nariz_ABI_Valvulas/releases/download/v0.2.3/firmware.bin
+sha256=60CD020083E860044951B3CC65403CBA751C2635B36F5B13BA08084ED88704CE

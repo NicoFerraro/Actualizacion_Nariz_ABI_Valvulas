@@ -22,10 +22,32 @@ class AppRuntime {
   void loop();
 
  private:
+  static constexpr size_t kViewerAccountCount = 3;
+
   enum class SystemState {
     IdlePurge,
     Sample,
     Purge
+  };
+
+  enum class AccessRole {
+    None,
+    Viewer,
+    Operator,
+    Master
+  };
+
+  enum class Permission {
+    ViewData,
+    ManageConfig,
+    ManageOta,
+    ManageSecurity,
+    DeleteFiles
+  };
+
+  struct UserAccount {
+    String username;
+    String password;
   };
 
   struct RuntimeConfig {
@@ -33,8 +55,8 @@ class AppRuntime {
     uint32_t purgeTimeMs;
     String wifiSsid;
     String wifiPassword;
-    String adminUser;
-    String adminPassword;
+    UserAccount operatorAccount;
+    UserAccount viewerAccounts[kViewerAccountCount];
     bool otaEnabled;
     String otaManifestUrl;
   };
@@ -125,9 +147,16 @@ class AppRuntime {
   bool parseManifest(const String& manifestBody, OtaManifest& manifest);
   bool downloadAndApplyFirmware(const OtaManifest& manifest, String& message);
 
-  bool ensureAuthenticated(AsyncWebServerRequest* request);
+  AccessRole authenticateRequest(AsyncWebServerRequest* request);
+  bool ensurePermission(AsyncWebServerRequest* request, Permission permission, AccessRole* role = nullptr);
+  bool hasPermission(AccessRole role, Permission permission);
   bool parseSecondsParam(AsyncWebServerRequest* request, const char* name, bool allowZero, uint32_t& resultMs);
+  bool isAccountConfigured(const UserAccount& account);
+  bool validateUserAccount(const String& username, const String& password, bool allowEmpty, String& error);
+  bool validateSecurityConfig(String& error);
+  bool userNamesEqual(const String& left, const String& right);
 
+  String buildAuthJson(AccessRole role);
   String buildDataJson();
   String buildConfigJson();
   String getTimestamp();
@@ -141,6 +170,7 @@ class AppRuntime {
   String sanitizeCsvFileName(const String& rawName);
   String getBuildStamp();
   String getResetReason();
+  String getRoleName(AccessRole role);
 
   int compareVersions(const String& left, const String& right);
   int getEnabledValveCount();
