@@ -1,21 +1,11 @@
 #include "AppRuntime.h"
 #include <esp_system.h>
 
-#ifndef APP_VERSION
-#define APP_VERSION "0.2.4"
-#endif
-
 #ifndef BUILD_STAMP
 #define BUILD_STAMP __DATE__ " " __TIME__
 #endif
 
 namespace {
-
-constexpr int kRxIndustrial = 33;
-constexpr int kTxIndustrial = 32;
-constexpr int kRxCO2 = 27;
-constexpr int kTxCO2 = 26;
-constexpr int kSdCs = 5;
 
 constexpr size_t kValveCount = 4;
 constexpr int kSampleValvePins[kValveCount] = {13, 2, 15, 4};
@@ -33,13 +23,19 @@ constexpr uint32_t kNtpSyncIntervalMs = 86400000UL;
 constexpr uint16_t kRtcFallbackYear = 2020;
 constexpr int kOverflowThreshold = 40000;
 
-constexpr char kPrefsNamespace[] = "narizcfg";
-constexpr char kDefaultApSsid[] = "Nariz-Metatron-Pro";
-constexpr char kDefaultApPassword[] = "12345678";
 constexpr char kDefaultAdminUser[] = "admin";
 constexpr char kDefaultAdminPassword[] = "admin";
 constexpr char kNtpServer[] = "pool.ntp.org";
 constexpr long kGmtOffsetSec = -10800;
+constexpr char kContinuousSourceLabel[] = "Entrada unica";
+constexpr char kContinuousStateName[] = "CONTINUO";
+constexpr char kContinuousDetailTitle[] = "Motor";
+constexpr char kContinuousDetailValue[] = "Activo";
+constexpr char kContinuousCycleTitle[] = "Operacion";
+constexpr char kContinuousCycleValue[] = "Continua";
+constexpr char kGenericSourceTitle[] = "Origen actual";
+constexpr char kValveDetailTitle[] = "Valvulas activas";
+constexpr char kValveCycleTitle[] = "Tiempo restante";
 
 uint8_t kReadCommand[] = {0xFF, 0x01, 0x86, 0x00, 0x00, 0x00, 0x00, 0x00, 0x79};
 
@@ -49,7 +45,7 @@ void AppRuntime::setup() {
   Serial.begin(115200);
   delay(1000);
   Serial.println();
-  Serial.println("=== Nariz Metatron ===");
+  Serial.println("=== " + String(app_variant::kProductName) + " ===");
   Serial.print("Firmware: ");
   Serial.println(APP_VERSION);
   Serial.print("Build: ");
@@ -77,23 +73,30 @@ void AppRuntime::loop() {
 }
 
 void AppRuntime::setupHardware() {
-  for (size_t i = 0; i < kValveCount; ++i) {
-    pinMode(kSampleValvePins[i], OUTPUT);
-    digitalWrite(kSampleValvePins[i], HIGH);
+  if (app_variant::kSupportsValveControl) {
+    for (size_t i = 0; i < kValveCount; ++i) {
+      pinMode(kSampleValvePins[i], OUTPUT);
+      digitalWrite(kSampleValvePins[i], HIGH);
+    }
+
+    pinMode(kPurgeValvePin, OUTPUT);
+    digitalWrite(kPurgeValvePin, HIGH);
   }
 
-  pinMode(kPurgeValvePin, OUTPUT);
-  digitalWrite(kPurgeValvePin, HIGH);
+  if (app_variant::kUsesDedicatedMotor) {
+    pinMode(app_variant::kMotorPin, OUTPUT);
+    setMotorEnabled(true);
+  }
 }
 
 void AppRuntime::setupRtc() {
-  pinMode(21, OUTPUT);
-  pinMode(22, OUTPUT);
-  digitalWrite(21, HIGH);
-  digitalWrite(22, HIGH);
+  pinMode(app_variant::kRtcSdaPin, OUTPUT);
+  pinMode(app_variant::kRtcSclPin, OUTPUT);
+  digitalWrite(app_variant::kRtcSdaPin, HIGH);
+  digitalWrite(app_variant::kRtcSclPin, HIGH);
   delay(10);
 
-  Wire.begin(21, 22);
+  Wire.begin(app_variant::kRtcSdaPin, app_variant::kRtcSclPin);
   Wire.setClock(100000);
 
   if (!rtc.begin()) {
@@ -107,7 +110,7 @@ void AppRuntime::setupRtc() {
 }
 
 void AppRuntime::setupStorage() {
-  if (!SD.begin(kSdCs)) {
+  if (!SD.begin(app_variant::kSdCsPin)) {
     Serial.println("Fallo SD");
   }
 }
@@ -120,14 +123,14 @@ void AppRuntime::setupNetwork() {
 }
 
 void AppRuntime::setupSensors() {
-  Serial2.begin(9600, SERIAL_8N1, kRxIndustrial, kTxIndustrial);
-  Serial1.begin(9600, SERIAL_8N1, kRxCO2, kTxCO2);
+  Serial2.begin(9600, SERIAL_8N1, app_variant::kIndustrialRxPin, app_variant::kIndustrialTxPin);
+  Serial1.begin(9600, SERIAL_8N1, app_variant::kCo2RxPin, app_variant::kCo2TxPin);
   forceCO2RangeToTenPercent();
   disableCO2AutoCalibration();
 }
 
 void AppRuntime::loadConfig() {
-  preferences.begin(kPrefsNamespace, true);
+  preferences.begin(app_variant::kPreferencesNamespace, true);
 
   for (size_t i = 0; i < kValveCount; ++i) {
     const char key[] = {'v', static_cast<char>('1' + i), '\0'};
@@ -169,7 +172,9 @@ void AppRuntime::loadConfig() {
   }
 
   runtimeConfig.otaEnabled = preferences.isKey("ota_en") ? preferences.getBool("ota_en", false) : false;
-  runtimeConfig.otaManifestUrl = preferences.isKey("ota_url") ? preferences.getString("ota_url", "") : "";
+  runtimeConfig.otaManifestUrl = preferences.isKey("ota_url")
+      ? preferences.getString("ota_url", app_variant::kDefaultOtaManifestUrl)
+      : String(app_variant::kDefaultOtaManifestUrl);
   preferences.end();
 
   loadOtaStatus();
@@ -177,7 +182,7 @@ void AppRuntime::loadConfig() {
 }
 
 void AppRuntime::saveOperationalConfig() {
-  preferences.begin(kPrefsNamespace, false);
+  preferences.begin(app_variant::kPreferencesNamespace, false);
   for (size_t i = 0; i < kValveCount; ++i) {
     const char key[] = {'v', static_cast<char>('1' + i), '\0'};
     preferences.putULong(key, runtimeConfig.sampleTimeMs[i]);
@@ -187,14 +192,14 @@ void AppRuntime::saveOperationalConfig() {
 }
 
 void AppRuntime::saveWifiConfig() {
-  preferences.begin(kPrefsNamespace, false);
+  preferences.begin(app_variant::kPreferencesNamespace, false);
   preferences.putString("wifi_ssid", runtimeConfig.wifiSsid);
   preferences.putString("wifi_pass", runtimeConfig.wifiPassword);
   preferences.end();
 }
 
 void AppRuntime::saveSecurityConfig() {
-  preferences.begin(kPrefsNamespace, false);
+  preferences.begin(app_variant::kPreferencesNamespace, false);
   if (isAccountConfigured(runtimeConfig.operatorAccount)) {
     preferences.putString("adm_user", runtimeConfig.operatorAccount.username);
     preferences.putString("adm_pass", runtimeConfig.operatorAccount.password);
@@ -218,14 +223,14 @@ void AppRuntime::saveSecurityConfig() {
 }
 
 void AppRuntime::saveOtaConfig() {
-  preferences.begin(kPrefsNamespace, false);
+  preferences.begin(app_variant::kPreferencesNamespace, false);
   preferences.putBool("ota_en", runtimeConfig.otaEnabled);
   preferences.putString("ota_url", runtimeConfig.otaManifestUrl);
   preferences.end();
 }
 
 void AppRuntime::loadOtaStatus() {
-  preferences.begin(kPrefsNamespace, true);
+  preferences.begin(app_variant::kPreferencesNamespace, true);
   otaStatus.lastMessage = preferences.isKey("ota_msg")
       ? preferences.getString("ota_msg", runtimeConfig.otaEnabled ? "OTA configurada" : "OTA deshabilitada")
       : (runtimeConfig.otaEnabled ? "OTA configurada" : "OTA deshabilitada");
@@ -239,7 +244,7 @@ void AppRuntime::loadOtaStatus() {
 }
 
 void AppRuntime::saveOtaStatus() {
-  preferences.begin(kPrefsNamespace, false);
+  preferences.begin(app_variant::kPreferencesNamespace, false);
   preferences.putString("ota_msg", otaStatus.lastMessage);
   preferences.putString("ota_chk", otaStatus.lastCheck);
   preferences.putString("ota_av", otaStatus.availableVersion);
@@ -247,21 +252,21 @@ void AppRuntime::saveOtaStatus() {
 }
 
 void AppRuntime::setPendingOtaVersion(const String& version) {
-  preferences.begin(kPrefsNamespace, false);
+  preferences.begin(app_variant::kPreferencesNamespace, false);
   preferences.putBool("ota_pend", true);
   preferences.putString("ota_exp", version);
   preferences.end();
 }
 
 void AppRuntime::clearPendingOtaVersion() {
-  preferences.begin(kPrefsNamespace, false);
+  preferences.begin(app_variant::kPreferencesNamespace, false);
   preferences.remove("ota_pend");
   preferences.remove("ota_exp");
   preferences.end();
 }
 
 void AppRuntime::finalizePendingOtaUpdate() {
-  preferences.begin(kPrefsNamespace, true);
+  preferences.begin(app_variant::kPreferencesNamespace, true);
   const bool pending = preferences.isKey("ota_pend") ? preferences.getBool("ota_pend", false) : false;
   const String expectedVersion = preferences.isKey("ota_exp") ? preferences.getString("ota_exp", "") : "";
   preferences.end();
@@ -288,7 +293,7 @@ void AppRuntime::finalizePendingOtaUpdate() {
 void AppRuntime::startAccessPoint() {
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAPConfig(IPAddress(192, 168, 4, 1), IPAddress(192, 168, 4, 1), IPAddress(255, 255, 255, 0));
-  WiFi.softAP(kDefaultApSsid, kDefaultApPassword);
+  WiFi.softAP(app_variant::kAccessPointSsid, app_variant::kAccessPointPassword);
 }
 
 void AppRuntime::beginWifiClientConnection(bool forceReconnect) {
@@ -433,6 +438,10 @@ void AppRuntime::readCO2Sensor() {
 }
 
 bool AppRuntime::isValveEnabled(int valveIndex) {
+  if (!app_variant::kSupportsValveControl) {
+    return false;
+  }
+
   if (valveIndex < 0 || valveIndex >= static_cast<int>(kValveCount)) {
     return false;
   }
@@ -440,6 +449,10 @@ bool AppRuntime::isValveEnabled(int valveIndex) {
 }
 
 int AppRuntime::getEnabledValveCount() {
+  if (!app_variant::kSupportsValveControl) {
+    return 0;
+  }
+
   int count = 0;
   for (size_t i = 0; i < kValveCount; ++i) {
     if (isValveEnabled(static_cast<int>(i))) {
@@ -450,6 +463,10 @@ int AppRuntime::getEnabledValveCount() {
 }
 
 int AppRuntime::findFirstEnabledValve() {
+  if (!app_variant::kSupportsValveControl) {
+    return -1;
+  }
+
   for (size_t i = 0; i < kValveCount; ++i) {
     if (isValveEnabled(static_cast<int>(i))) {
       return static_cast<int>(i);
@@ -459,6 +476,10 @@ int AppRuntime::findFirstEnabledValve() {
 }
 
 int AppRuntime::findNextEnabledValve(int afterIndex) {
+  if (!app_variant::kSupportsValveControl) {
+    return -1;
+  }
+
   for (size_t offset = 1; offset <= kValveCount; ++offset) {
     const int candidate = (afterIndex + static_cast<int>(offset) + static_cast<int>(kValveCount)) % static_cast<int>(kValveCount);
     if (isValveEnabled(candidate)) {
@@ -469,6 +490,10 @@ int AppRuntime::findNextEnabledValve(int afterIndex) {
 }
 
 String AppRuntime::getEnabledValvesSummary() {
+  if (!app_variant::kSupportsValveControl) {
+    return String(kContinuousDetailValue);
+  }
+
   String summary;
   for (size_t i = 0; i < kValveCount; ++i) {
     if (!isValveEnabled(static_cast<int>(i))) {
@@ -484,6 +509,10 @@ String AppRuntime::getEnabledValvesSummary() {
 }
 
 String AppRuntime::getStateName() {
+  if (!app_variant::kSupportsValveControl) {
+    return String(kContinuousStateName);
+  }
+
   switch (currentState) {
     case SystemState::IdlePurge:
       return "PURGA_IDLE";
@@ -495,7 +524,46 @@ String AppRuntime::getStateName() {
   return "DESCONOCIDO";
 }
 
+String AppRuntime::getSourceTitle() {
+  return app_variant::kSupportsValveControl ? String(kGenericSourceTitle) : "Entrada";
+}
+
+String AppRuntime::getStatusDetailTitle() {
+  return app_variant::kSupportsValveControl ? String(kValveDetailTitle) : String(kContinuousDetailTitle);
+}
+
+String AppRuntime::getStatusDetailValue() {
+  return app_variant::kSupportsValveControl ? getEnabledValvesSummary() : String(kContinuousDetailValue);
+}
+
+String AppRuntime::getCycleStatusTitle() {
+  return app_variant::kSupportsValveControl ? String(kValveCycleTitle) : String(kContinuousCycleTitle);
+}
+
+String AppRuntime::getCycleStatusValue() {
+  if (!app_variant::kSupportsValveControl) {
+    return String(kContinuousCycleValue);
+  }
+
+  const uint32_t remainingMs = getStageRemainingMs();
+  if (remainingMs == 0) {
+    return "Sin cambio automatico";
+  }
+
+  const uint32_t totalSeconds = remainingMs / 1000UL;
+  const uint32_t hours = totalSeconds / 3600UL;
+  const uint32_t minutes = (totalSeconds % 3600UL) / 60UL;
+  const uint32_t seconds = totalSeconds % 60UL;
+  char buffer[12];
+  snprintf(buffer, sizeof(buffer), "%02lu:%02lu:%02lu", hours, minutes, seconds);
+  return String(buffer);
+}
+
 uint32_t AppRuntime::getCurrentStageDurationMs() {
+  if (!app_variant::kSupportsValveControl) {
+    return 0;
+  }
+
   const int enabledCount = getEnabledValveCount();
   if (currentState == SystemState::Sample) {
     if (enabledCount <= 1 || currentValveIndex < 0) {
@@ -522,20 +590,47 @@ uint32_t AppRuntime::getStageRemainingMs() {
 }
 
 void AppRuntime::closeAllSampleValves() {
+  if (!app_variant::kSupportsValveControl) {
+    return;
+  }
+
   for (size_t i = 0; i < kValveCount; ++i) {
     digitalWrite(kSampleValvePins[i], HIGH);
   }
 }
 
 void AppRuntime::openPurgeValve() {
+  if (!app_variant::kSupportsValveControl) {
+    return;
+  }
+
   digitalWrite(kPurgeValvePin, LOW);
 }
 
 void AppRuntime::closePurgeValve() {
+  if (!app_variant::kSupportsValveControl) {
+    return;
+  }
+
   digitalWrite(kPurgeValvePin, HIGH);
 }
 
+void AppRuntime::setMotorEnabled(bool enabled) {
+  if (!app_variant::kUsesDedicatedMotor || app_variant::kMotorPin < 0) {
+    return;
+  }
+
+  const uint8_t inactiveLevel = app_variant::kMotorActiveLevel == HIGH ? LOW : HIGH;
+  digitalWrite(app_variant::kMotorPin, enabled ? app_variant::kMotorActiveLevel : inactiveLevel);
+}
+
 void AppRuntime::applyOutputsForCurrentState() {
+  if (!app_variant::kSupportsValveControl) {
+    setMotorEnabled(true);
+    activeSourceLabel = kContinuousSourceLabel;
+    return;
+  }
+
   switch (currentState) {
     case SystemState::IdlePurge:
       closeAllSampleValves();
@@ -581,6 +676,11 @@ void AppRuntime::enterState(SystemState newState, int valveIndex, bool forceTran
 }
 
 void AppRuntime::applyStoredConfigToStateMachine() {
+  if (!app_variant::kSupportsValveControl) {
+    enterState(SystemState::Sample, -1, true);
+    return;
+  }
+
   const int enabledCount = getEnabledValveCount();
   if (enabledCount == 0) {
     if (currentState != SystemState::IdlePurge) {
@@ -605,6 +705,11 @@ void AppRuntime::applyStoredConfigToStateMachine() {
 }
 
 void AppRuntime::updateValveStateMachine() {
+  if (!app_variant::kSupportsValveControl) {
+    enterState(SystemState::Sample, -1);
+    return;
+  }
+
   const int enabledCount = getEnabledValveCount();
   if (enabledCount == 0) {
     enterState(SystemState::IdlePurge, -1);
@@ -724,13 +829,18 @@ String AppRuntime::buildDataJson() {
   json += ",\"o2\":" + String(indData.o2, 1);
   json += ",\"ch4\":" + String(indData.ch4);
   json += ",\"co2\":" + String(currentCO2);
+  json += ",\"productName\":\"" + jsonEscape(String(app_variant::kProductName)) + "\"";
   json += ",\"wifiStatus\":\"" + jsonEscape(WiFi.status() == WL_CONNECTED ? "Conectado" : "Desconectado") + "\"";
   json += ",\"localIP\":\"" + jsonEscape(WiFi.localIP().toString()) + "\"";
   json += ",\"apIP\":\"" + jsonEscape(WiFi.softAPIP().toString()) + "\"";
   json += ",\"wifiSSID\":\"" + jsonEscape(WiFi.status() == WL_CONNECTED ? WiFi.SSID() : "-") + "\"";
-  json += ",\"valvula\":\"" + jsonEscape(activeSourceLabel) + "\"";
   json += ",\"state\":\"" + jsonEscape(getStateName()) + "\"";
-  json += ",\"activeValves\":\"" + jsonEscape(getEnabledValvesSummary()) + "\"";
+  json += ",\"sourceTitle\":\"" + jsonEscape(getSourceTitle()) + "\"";
+  json += ",\"source\":\"" + jsonEscape(activeSourceLabel) + "\"";
+  json += ",\"detailTitle\":\"" + jsonEscape(getStatusDetailTitle()) + "\"";
+  json += ",\"detailValue\":\"" + jsonEscape(getStatusDetailValue()) + "\"";
+  json += ",\"cycleTitle\":\"" + jsonEscape(getCycleStatusTitle()) + "\"";
+  json += ",\"cycleValue\":\"" + jsonEscape(getCycleStatusValue()) + "\"";
   json += ",\"remainingMs\":" + String(getStageRemainingMs());
   json += ",\"date\":\"" + jsonEscape(getDate()) + "\"";
   json += ",\"time\":\"" + jsonEscape(getTimestamp()) + "\"";
@@ -753,17 +863,31 @@ void AppRuntime::appendCsvRow(const String& label) {
   }
 
   if (!exists) {
-    file.println("Hora,Valvula,CO(ppm),H2S(ppm),O2(%),CH4(%LEL),CO2(ppm)");
+    if (app_variant::kSupportsValveControl) {
+      file.println("Hora,Valvula,CO(ppm),H2S(ppm),O2(%),CH4(%LEL),CO2(ppm)");
+    } else {
+      file.println("Hora,CO(ppm),H2S(ppm),O2(%),CH4(%LEL),CO2(ppm)");
+    }
   }
 
-  file.printf("%s,%s,%d,%d,%.1f,%d,%d\n",
-              getTimestamp().c_str(),
-              label.c_str(),
-              indData.co,
-              indData.h2s,
-              indData.o2,
-              indData.ch4,
-              currentCO2);
+  if (app_variant::kSupportsValveControl) {
+    file.printf("%s,%s,%d,%d,%.1f,%d,%d\n",
+                getTimestamp().c_str(),
+                label.c_str(),
+                indData.co,
+                indData.h2s,
+                indData.o2,
+                indData.ch4,
+                currentCO2);
+  } else {
+    file.printf("%s,%d,%d,%.1f,%d,%d\n",
+                getTimestamp().c_str(),
+                indData.co,
+                indData.h2s,
+                indData.o2,
+                indData.ch4,
+                currentCO2);
+  }
   file.close();
 }
 

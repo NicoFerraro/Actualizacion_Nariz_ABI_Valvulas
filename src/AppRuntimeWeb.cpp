@@ -1,10 +1,6 @@
 #include "AppRuntime.h"
 #include "web_ui.h"
 
-#ifndef APP_VERSION
-#define APP_VERSION "0.2.4"
-#endif
-
 #ifndef BUILD_STAMP
 #define BUILD_STAMP __DATE__ " " __TIME__
 #endif
@@ -231,7 +227,13 @@ String AppRuntime::sanitizeCsvFileName(const String& rawName) {
 
 String AppRuntime::buildConfigJson() {
   String json = "{";
-  json += "\"v1\":" + String(runtimeConfig.sampleTimeMs[0] / 1000UL);
+  json += "\"productName\":\"" + jsonEscape(String(app_variant::kProductName)) + "\"";
+  json += ",\"supportsValveConfig\":" + String(app_variant::kSupportsValveControl ? "true" : "false");
+  json += ",\"samplingTitle\":\"" + jsonEscape(app_variant::kSupportsValveControl ? "Programa de valvulas" : "Muestreo continuo") + "\"";
+  json += ",\"samplingDescription\":\"" + jsonEscape(app_variant::kSupportsValveControl
+      ? "Con 0 valvulas activas queda purga abierta permanente. Con 1 valvula activa trabaja continuo sin purga y podes dejar purga en 0. Con 2 o mas la purga debe ser de al menos 30 segundos."
+      : "Esta variante mide de forma continua y mantiene el motor activo desde el arranque.") + "\"";
+  json += ",\"v1\":" + String(runtimeConfig.sampleTimeMs[0] / 1000UL);
   json += ",\"v2\":" + String(runtimeConfig.sampleTimeMs[1] / 1000UL);
   json += ",\"v3\":" + String(runtimeConfig.sampleTimeMs[2] / 1000UL);
   json += ",\"v4\":" + String(runtimeConfig.sampleTimeMs[3] / 1000UL);
@@ -607,6 +609,11 @@ void AppRuntime::setupWebServer() {
 
   server.on("/config/save", HTTP_POST, [this](AsyncWebServerRequest* request) {
     if (!ensurePermission(request, Permission::ManageConfig)) {
+      return;
+    }
+
+    if (!app_variant::kSupportsValveControl) {
+      request->send(200, "text/plain", "Esta variante trabaja en muestreo continuo.");
       return;
     }
 

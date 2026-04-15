@@ -2,6 +2,7 @@
 #define APP_RUNTIME_H
 
 #include <Arduino.h>
+#include "AppVariantConfig.h"
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
 #include <AsyncTCP.h>
@@ -95,7 +96,7 @@ class AppRuntime {
 
   SystemState currentState = SystemState::IdlePurge;
   int currentValveIndex = -1;
-  String activeSourceLabel = "PURGA_IDLE";
+  String activeSourceLabel;
 
   bool pendingStateLog = false;
   bool pendingIdleLog = false;
@@ -164,6 +165,11 @@ class AppRuntime {
   String getDateTimeString();
   String getFileName();
   String getStateName();
+  String getSourceTitle();
+  String getStatusDetailTitle();
+  String getStatusDetailValue();
+  String getCycleStatusTitle();
+  String getCycleStatusValue();
   String getEnabledValvesSummary();
   String jsonEscape(const String& value);
   String bytesToHexString(const uint8_t* data, size_t length);
@@ -183,6 +189,7 @@ class AppRuntime {
   bool isRtcValid();
   bool isValveEnabled(int valveIndex);
   bool isUnsignedNumber(const String& text);
+  void setMotorEnabled(bool enabled);
 };
 
 #endif

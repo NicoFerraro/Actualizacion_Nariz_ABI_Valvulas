@@ -158,7 +158,7 @@ const char index_html[] PROGMEM = R"rawliteral(
   <div class="shell">
     <div class="header">
       <div class="title">
-        <h1>Nariz Metatron</h1>
+        <h1 id="product-name">Nariz Metatron</h1>
         <div class="subtitle" id="date-display">Sin datos de reloj</div>
       </div>
       <div class="nav">
@@ -175,9 +175,9 @@ const char index_html[] PROGMEM = R"rawliteral(
         <div class="section-title">Estado del sistema</div>
         <div class="status-grid">
           <div class="status-pill" id="pill-state"><small>Modo</small><b id="state-label">-</b></div>
-          <div class="status-pill"><small>Origen actual</small><b id="valve-label">-</b></div>
-          <div class="status-pill"><small>Valvulas activas</small><b id="active-valves-label">-</b></div>
-          <div class="status-pill"><small>Tiempo restante</small><b id="remaining-label">-</b></div>
+          <div class="status-pill"><small id="source-title">Origen actual</small><b id="source-label">-</b></div>
+          <div class="status-pill"><small id="detail-title">Detalle</small><b id="detail-label">-</b></div>
+          <div class="status-pill"><small id="cycle-title">Tiempo restante</small><b id="cycle-label">-</b></div>
         </div>
       </div>
       <div class="card">
@@ -212,15 +212,18 @@ const char index_html[] PROGMEM = R"rawliteral(
       <div id="view-config" class="view">
         <div class="config-grid">
           <div class="card">
-            <div class="section-title">Programa de valvulas</div>
-            <label for="cfg-v1">Valvula 1 (segundos, 0 = deshabilitada)</label><input id="cfg-v1" type="number" min="0" max="86400">
-            <label for="cfg-v2">Valvula 2 (segundos, 0 = deshabilitada)</label><input id="cfg-v2" type="number" min="0" max="86400">
-            <label for="cfg-v3">Valvula 3 (segundos, 0 = deshabilitada)</label><input id="cfg-v3" type="number" min="0" max="86400">
-            <label for="cfg-v4">Valvula 4 (segundos, 0 = deshabilitada)</label><input id="cfg-v4" type="number" min="0" max="86400">
-            <label for="cfg-purge">Purga entre muestras (segundos, 0 = sin purga)</label><input id="cfg-purge" type="number" min="0" max="86400">
-            <div class="hint">Con 0 valvulas activas queda purga abierta permanente. Con 1 valvula activa trabaja continuo sin purga y podes dejar purga en 0. Con 2 o mas la purga debe ser de al menos 30 segundos.</div>
-            <button class="btn" onclick="saveValveConfig()">Guardar configuracion</button>
-            <div class="message" id="msg-valves"></div>
+            <div class="section-title" id="sampling-title">Programacion de muestreo</div>
+            <div id="sampling-config-fields">
+              <label for="cfg-v1">Valvula 1 (segundos, 0 = deshabilitada)</label><input id="cfg-v1" type="number" min="0" max="86400">
+              <label for="cfg-v2">Valvula 2 (segundos, 0 = deshabilitada)</label><input id="cfg-v2" type="number" min="0" max="86400">
+              <label for="cfg-v3">Valvula 3 (segundos, 0 = deshabilitada)</label><input id="cfg-v3" type="number" min="0" max="86400">
+              <label for="cfg-v4">Valvula 4 (segundos, 0 = deshabilitada)</label><input id="cfg-v4" type="number" min="0" max="86400">
+              <label for="cfg-purge">Purga entre muestras (segundos, 0 = sin purga)</label><input id="cfg-purge" type="number" min="0" max="86400">
+              <div class="hint" id="sampling-description">Configura el tiempo de cada etapa de muestreo.</div>
+              <button class="btn" onclick="saveValveConfig()">Guardar configuracion</button>
+            </div>
+            <div class="hint hidden" id="sampling-static-note"></div>
+            <div class="message" id="msg-sampling"></div>
           </div>
           <div class="card">
             <div class="section-title">Fecha y hora</div>
@@ -416,11 +419,16 @@ const char index_html[] PROGMEM = R"rawliteral(
       try {
         const response = await authenticatedFetch("/data");
         const data = await response.json();
+        document.title = data.productName || document.title;
+        document.getElementById("product-name").innerText = data.productName || document.getElementById("product-name").innerText;
         document.getElementById("date-display").innerText = data.date + " - " + data.time;
         document.getElementById("state-label").innerText = data.state;
-        document.getElementById("valve-label").innerText = data.valvula;
-        document.getElementById("active-valves-label").innerText = data.activeValves;
-        document.getElementById("remaining-label").innerText = formatSeconds(Math.floor(data.remainingMs / 1000));
+        document.getElementById("source-title").innerText = data.sourceTitle || "Origen actual";
+        document.getElementById("source-label").innerText = data.source || "-";
+        document.getElementById("detail-title").innerText = data.detailTitle || "Detalle";
+        document.getElementById("detail-label").innerText = data.detailValue || "-";
+        document.getElementById("cycle-title").innerText = data.cycleTitle || "Tiempo restante";
+        document.getElementById("cycle-label").innerText = data.cycleValue || formatSeconds(Math.floor((data.remainingMs || 0) / 1000));
         document.getElementById("wifi-status").innerText = data.wifiStatus;
         document.getElementById("wifi-ip").innerText = data.wifiSSID + " / " + data.localIP;
         document.getElementById("ap-ip").innerText = data.apIP;
@@ -428,7 +436,7 @@ const char index_html[] PROGMEM = R"rawliteral(
         document.getElementById("ota-summary").innerText = "OTA: " + data.otaMessage + "\nUltimo chequeo: " + data.otaLastCheck + "\nVersion disponible: " + data.otaAvailableVersion + "\nBuild: " + data.buildStamp + "\nReset: " + data.resetReason;
         const pill = document.getElementById("pill-state");
         pill.className = "status-pill";
-        if (data.state === "MUESTRA") pill.classList.add("state-sample");
+        if (data.state === "MUESTRA" || data.state === "CONTINUO") pill.classList.add("state-sample");
         else if (data.state === "PURGA") pill.classList.add("state-purge");
         else pill.classList.add("state-idle");
         const keys = ["co", "h2s", "o2", "ch4", "co2"];
@@ -507,6 +515,13 @@ const char index_html[] PROGMEM = R"rawliteral(
       try {
         const response = await authenticatedFetch("/config");
         const data = await response.json();
+        document.title = data.productName || document.title;
+        document.getElementById("product-name").innerText = data.productName || document.getElementById("product-name").innerText;
+        document.getElementById("sampling-title").innerText = data.samplingTitle || "Programacion de muestreo";
+        document.getElementById("sampling-description").innerText = data.samplingDescription || "";
+        document.getElementById("sampling-static-note").innerText = data.samplingDescription || "";
+        document.getElementById("sampling-config-fields").classList.toggle("hidden", !data.supportsValveConfig);
+        document.getElementById("sampling-static-note").classList.toggle("hidden", !!data.supportsValveConfig);
         document.getElementById("cfg-v1").value = data.v1;
         document.getElementById("cfg-v2").value = data.v2;
         document.getElementById("cfg-v3").value = data.v3;
@@ -525,7 +540,7 @@ const char index_html[] PROGMEM = R"rawliteral(
         document.getElementById("ota-manifest").value = data.otaManifestUrl || "";
         setMessage("msg-ota", "Version actual: " + data.firmwareVersion + "\nBuild: " + data.buildStamp + "\nReset: " + data.resetReason + "\nUltimo estado OTA: " + data.otaStatus + "\nUltimo chequeo: " + data.otaLastCheck + "\nVersion disponible: " + data.otaAvailableVersion);
       } catch (error) {
-        setMessage("msg-valves", error.message);
+        setMessage("msg-sampling", error.message);
       }
     }
 
@@ -538,24 +553,24 @@ const char index_html[] PROGMEM = R"rawliteral(
       const v4 = Number(document.getElementById("cfg-v4").value || 0);
       const purge = Number(document.getElementById("cfg-purge").value || 0);
       if (![v1, v2, v3, v4].every(validateValveSeconds)) {
-        setMessage("msg-valves", "Cada valvula debe ser 0 o un valor entre 30 y 86400 segundos.");
+        setMessage("msg-sampling", "Cada valvula debe ser 0 o un valor entre 30 y 86400 segundos.");
         return;
       }
       const enabledValveCount = [v1, v2, v3, v4].filter((value) => value >= 30).length;
       if (purge < 0 || purge > 86400) {
-        setMessage("msg-valves", "La purga debe estar entre 0 y 86400 segundos.");
+        setMessage("msg-sampling", "La purga debe estar entre 0 y 86400 segundos.");
         return;
       }
       if (enabledValveCount > 1 && purge < 30) {
-        setMessage("msg-valves", "Con 2 o mas valvulas activas la purga debe ser de 30 a 86400 segundos.");
+        setMessage("msg-sampling", "Con 2 o mas valvulas activas la purga debe ser de 30 a 86400 segundos.");
         return;
       }
       const params = new URLSearchParams();
       params.set("v1", v1); params.set("v2", v2); params.set("v3", v3); params.set("v4", v4); params.set("purge", purge);
       try {
         const response = await authenticatedFetch("/config/save", { method: "POST", body: params });
-        setMessage("msg-valves", await response.text());
-      } catch (error) { setMessage("msg-valves", error.message); }
+        setMessage("msg-sampling", await response.text());
+      } catch (error) { setMessage("msg-sampling", error.message); }
     }
 
     async function saveWifiConfig() {

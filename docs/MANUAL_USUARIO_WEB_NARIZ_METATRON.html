@@ -1,0 +1,1193 @@
+﻿<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Manual de Usuario - Nariz Metatron</title>
+  <style>
+    :root {
+      --text: #16222c;
+      --muted: #4f6574;
+      --line: #ccd8e1;
+      --line-strong: #8aa4b7;
+      --accent: #0f7a56;
+      --accent-soft: #dff3ea;
+      --bg: #eef3f6;
+      --card: #ffffff;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      line-height: 1.62;
+    }
+    .document {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 28px 24px 54px;
+    }
+    .section-shell {
+      background: var(--card);
+      border: 1px solid #dce6ed;
+      border-radius: 18px;
+      box-shadow: 0 12px 28px rgba(18, 34, 44, 0.08);
+      padding: 36px 40px 42px;
+    }
+    .cover-page {
+      min-height: 1120px;
+      display: flex;
+      align-items: stretch;
+      margin-bottom: 28px;
+      page-break-after: always;
+    }
+    .cover-shell {
+      width: 100%;
+      background: linear-gradient(155deg, #0d2330 0%, #103241 58%, #165367 100%);
+      color: #ffffff;
+      border-radius: 24px;
+      padding: 56px 54px 52px;
+      position: relative;
+      overflow: hidden;
+      box-shadow: 0 18px 40px rgba(8, 24, 33, 0.24);
+      display: flex;
+      flex-direction: column;
+    }
+    .cover-shell::before,
+    .cover-shell::after {
+      content: "";
+      position: absolute;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.08);
+    }
+    .cover-shell::before {
+      width: 320px;
+      height: 320px;
+      top: -120px;
+      right: -70px;
+    }
+    .cover-shell::after {
+      width: 240px;
+      height: 240px;
+      bottom: -110px;
+      left: -60px;
+    }
+    .cover-brand {
+      font-size: 0.96rem;
+      letter-spacing: 0.28em;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.82);
+      margin-bottom: 110px;
+    }
+    .cover-kicker {
+      margin: 0 0 12px;
+      font-size: 1rem;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: #96f0c8;
+    }
+    .cover-title {
+      margin: 0;
+      font-size: 3rem;
+      line-height: 1.08;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .cover-subtitle {
+      margin: 14px 0 0;
+      font-size: 1.5rem;
+      font-weight: 500;
+      color: rgba(255, 255, 255, 0.92);
+    }
+    .cover-summary {
+      margin: 24px 0 0;
+      max-width: 640px;
+      font-size: 1.05rem;
+      color: rgba(255, 255, 255, 0.88);
+    }
+    .cover-meta {
+      list-style: none;
+      margin: 42px 0 0;
+      padding: 0;
+      display: grid;
+      gap: 10px;
+      max-width: 620px;
+    }
+    .cover-meta li {
+      background: rgba(255, 255, 255, 0.09);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 12px;
+      padding: 12px 16px;
+    }
+    .toc-page {
+      margin-bottom: 28px;
+      page-break-after: always;
+    }
+    .section-title {
+      margin: 0 0 10px;
+      font-size: 2rem;
+      color: #102733;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .section-intro {
+      margin: 0 0 22px;
+      color: var(--muted);
+    }
+    .toc-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      gap: 10px;
+    }
+    .toc-list li {
+      margin: 0;
+      padding: 0;
+    }
+    .toc-list a {
+      display: block;
+      text-decoration: none;
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: 10px;
+      border: 1px solid transparent;
+    }
+    .toc-list a:hover {
+      background: #f3f8fb;
+      border-color: #d7e4ec;
+    }
+    .toc-level-2 a {
+      font-weight: 700;
+      background: #f6fafc;
+    }
+    .toc-level-3 a {
+      padding-left: 24px;
+      color: #324755;
+    }
+    .manual-body {
+      background: var(--card);
+      border: 1px solid #dce6ed;
+      border-radius: 18px;
+      box-shadow: 0 12px 28px rgba(18, 34, 44, 0.08);
+      padding: 36px 40px 42px;
+    }
+    .blank-page {
+      margin-top: 28px;
+      min-height: 1120px;
+      background: #ffffff;
+      border-radius: 18px;
+      page-break-before: always;
+      break-before: page;
+    }
+    h1, h2, h3 { color: #102733; }
+    .manual-body h1 {
+      margin: 0 0 18px;
+      font-size: 2rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .manual-body h2 {
+      margin-top: 34px;
+      margin-bottom: 12px;
+      padding-bottom: 9px;
+      border-bottom: 2px solid #dce7ef;
+      font-size: 1.45rem;
+      break-after: avoid-page;
+      page-break-after: avoid;
+    }
+    .manual-body h3 {
+      margin-top: 24px;
+      margin-bottom: 12px;
+      font-size: 1.08rem;
+      break-after: avoid-page;
+      page-break-after: avoid;
+    }
+    .manual-body h2 + p,
+    .manual-body h2 + ul,
+    .manual-body h2 + ol,
+    .manual-body h2 + pre,
+    .manual-body h2 + .manual-figure,
+    .manual-body h2 + hr,
+    .manual-body h3 + p,
+    .manual-body h3 + ul,
+    .manual-body h3 + ol,
+    .manual-body h3 + pre,
+    .manual-body h3 + .manual-figure {
+      break-before: avoid-page;
+      page-break-before: avoid;
+    }
+    .manual-body h3[id^="imagen-"] {
+      margin-bottom: 4px;
+    }
+    p, li { font-size: 1rem; }
+    p { margin: 0 0 14px; }
+    ul, ol { margin: 12px 0 16px 22px; padding: 0; }
+    li { margin: 8px 0; }
+    .li-detail {
+      margin-top: 6px;
+      color: #324755;
+    }
+    hr {
+      border: 0;
+      border-top: 2px solid #dce7ef;
+      margin: 30px 0;
+    }
+    pre {
+      background: #f4f7fa;
+      border: 1px solid #d7e1e8;
+      border-radius: 12px;
+      padding: 14px 16px;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      margin: 14px 0 18px;
+    }
+    code {
+      font-family: Consolas, "Courier New", monospace;
+      background: #eef4f8;
+      padding: 2px 5px;
+      border-radius: 5px;
+      font-size: 0.95em;
+    }
+    pre code {
+      background: transparent;
+      padding: 0;
+      border-radius: 0;
+    }
+    .img-placeholder {
+      margin: 18px 0 24px;
+      min-height: 190px;
+      border: 2px dashed #93a9b8;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      color: #60798a;
+      background: #f8fbfd;
+      padding: 20px;
+      font-weight: 600;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .img-title {
+      color: #1e3645;
+      font-size: 1.02rem;
+    }
+    .manual-figure {
+      margin: 18px 0 24px;
+      text-align: center;
+      page-break-inside: avoid;
+      break-inside: avoid-page;
+    }
+    .manual-body h3[id^="imagen-"] + .manual-figure {
+      margin-top: 6px;
+      break-before: avoid-page;
+      page-break-before: avoid;
+    }
+    .manual-figure img {
+      max-width: 100%;
+      height: auto;
+      border: 1px solid #d5e0e8;
+      border-radius: 12px;
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.08);
+    }
+    .manual-figure figcaption {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 0.95rem;
+      font-style: italic;
+    }
+    @page {
+      size: A4 portrait;
+      margin: 20mm 15mm 20mm 30mm;
+    }
+    @media print {
+      body {
+        background: #ffffff;
+      }
+      .document {
+        max-width: none;
+        padding: 0;
+      }
+      .section-shell,
+      .manual-body {
+        box-shadow: none;
+        border: none;
+        border-radius: 0;
+      }
+      .section-shell,
+      .manual-body,
+      .cover-shell {
+        padding-left: 0;
+        padding-right: 0;
+      }
+      .cover-page,
+      .toc-page,
+      .blank-page,
+      .manual-figure,
+      pre {
+        page-break-inside: avoid;
+      }
+      .cover-page {
+        min-height: auto;
+      }
+      .blank-page {
+        min-height: auto;
+        margin-top: 0;
+      }
+      .cover-shell {
+        padding-top: 8mm;
+        padding-bottom: 8mm;
+      }
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="document">
+    <section class="cover-page">
+      <div class="cover-shell">
+        <div class="cover-brand">Einsted S.A.</div>
+        <p class="cover-kicker">Manual de Usuario</p>
+        <h1 class="cover-title">Nariz Metatron</h1>
+        <p class="cover-subtitle">Uso de la interfaz web operativa</p>
+        <p class="cover-summary">Guia practica para ingresar al sistema, consultar informacion, descargar archivos y operar la configuracion permitida de forma segura y ordenada.</p>
+      <ul class="cover-meta">
+<li>Version del manual: 1.0</li>
+<li>Aplicable a la interfaz web validada con firmware 0.2.4</li>
+<li>Fecha de generacion: 13/04/2026</li>
+      </ul>
+      </div>
+    </section>
+    <section class="toc-page">
+      <div class="section-shell">
+        <h1 class="section-title">Indice</h1>
+        <p class="section-intro">Este indice permite ubicar rapidamente cada parte del manual. En la version PDF los enlaces se pueden usar como referencia rapida.</p>
+        <ul class="toc-list">
+<li class="toc-level-2"><a href="#1-objetivo-de-este-manual">1. Objetivo de este manual</a></li>
+<li class="toc-level-2"><a href="#2-que-es-la-web-del-equipo">2. Que es la web del equipo</a></li>
+<li class="toc-level-2"><a href="#3-formas-de-entrar-a-la-web">3. Formas de entrar a la web</a></li>
+<li class="toc-level-3"><a href="#3-1-entrando-por-la-red-del-sitio">3.1. Entrando por la red del sitio</a></li>
+<li class="toc-level-3"><a href="#3-2-entrando-por-el-access-point-del-equipo">3.2. Entrando por el Access Point del equipo</a></li>
+<li class="toc-level-2"><a href="#4-antes-de-empezar-a-usarlo">4. Antes de empezar a usarlo</a></li>
+<li class="toc-level-2"><a href="#5-inicio-de-sesion">5. Inicio de sesion</a></li>
+<li class="toc-level-3"><a href="#5-1-como-ingresar">5.1. Como ingresar</a></li>
+<li class="toc-level-3"><a href="#5-2-tipos-de-usuario-que-puede-ver-un-operario">5.2. Tipos de usuario que puede ver un operario</a></li>
+<li class="toc-level-3"><a href="#5-3-como-saber-con-que-tipo-de-usuario-se-ingreso">5.3. Como saber con que tipo de usuario se ingreso</a></li>
+<li class="toc-level-3"><a href="#5-4-como-cerrar-sesion">5.4. Como cerrar sesion</a></li>
+<li class="toc-level-2"><a href="#6-vista-general-de-la-pantalla-principal">6. Vista general de la pantalla principal</a></li>
+<li class="toc-level-3"><a href="#6-1-para-que-sirve-cada-boton-superior">6.1. Para que sirve cada boton superior</a></li>
+<li class="toc-level-2"><a href="#7-panel-estado-del-sistema">7. Panel "Estado del sistema"</a></li>
+<li class="toc-level-3"><a href="#7-1-significado-de-modo">7.1. Significado de "Modo"</a></li>
+<li class="toc-level-3"><a href="#7-2-significado-de-origen-actual">7.2. Significado de "Origen actual"</a></li>
+<li class="toc-level-3"><a href="#7-3-significado-de-valvulas-activas">7.3. Significado de "Valvulas activas"</a></li>
+<li class="toc-level-3"><a href="#7-4-significado-de-tiempo-restante">7.4. Significado de "Tiempo restante"</a></li>
+<li class="toc-level-2"><a href="#8-panel-red-y-firmware">8. Panel "Red y firmware"</a></li>
+<li class="toc-level-2"><a href="#9-pantalla-graficos">9. Pantalla "Graficos"</a></li>
+<li class="toc-level-3"><a href="#9-1-como-leer-los-graficos">9.1. Como leer los graficos</a></li>
+<li class="toc-level-3"><a href="#9-2-recomendaciones-de-uso">9.2. Recomendaciones de uso</a></li>
+<li class="toc-level-2"><a href="#10-pantalla-archivos">10. Pantalla "Archivos"</a></li>
+<li class="toc-level-3"><a href="#10-1-descargar-un-archivo">10.1. Descargar un archivo</a></li>
+<li class="toc-level-3"><a href="#10-2-borrar-un-archivo">10.2. Borrar un archivo</a></li>
+<li class="toc-level-3"><a href="#10-3-recomendacion-importante">10.3. Recomendacion importante</a></li>
+<li class="toc-level-2"><a href="#11-pantalla-configuracion">11. Pantalla "Configuracion"</a></li>
+<li class="toc-level-2"><a href="#12-programa-de-valvulas">12. Programa de valvulas</a></li>
+<li class="toc-level-3"><a href="#12-1-como-funciona-el-valor-de-cada-valvula">12.1. Como funciona el valor de cada valvula</a></li>
+<li class="toc-level-3"><a href="#12-2-regla-de-purga">12.2. Regla de purga</a></li>
+<li class="toc-level-3"><a href="#12-3-como-cambiar-la-programacion">12.3. Como cambiar la programacion</a></li>
+<li class="toc-level-3"><a href="#12-4-ejemplos-practicos">12.4. Ejemplos practicos</a></li>
+<li class="toc-level-3"><a href="#12-5-recomendaciones-importantes">12.5. Recomendaciones importantes</a></li>
+<li class="toc-level-2"><a href="#13-fecha-y-hora">13. Fecha y hora</a></li>
+<li class="toc-level-3"><a href="#13-1-ajuste-manual">13.1. Ajuste manual</a></li>
+<li class="toc-level-3"><a href="#13-2-usar-hora-del-dispositivo">13.2. Usar hora del dispositivo</a></li>
+<li class="toc-level-3"><a href="#13-3-cuando-conviene-revisar-la-hora">13.3. Cuando conviene revisar la hora</a></li>
+<li class="toc-level-2"><a href="#14-wifi-del-sitio">14. WiFi del sitio</a></li>
+<li class="toc-level-3"><a href="#14-1-como-cargar-una-red-wifi">14.1. Como cargar una red WiFi</a></li>
+<li class="toc-level-3"><a href="#14-2-que-pasa-si-se-deja-vacio-el-ssid">14.2. Que pasa si se deja vacio el SSID</a></li>
+<li class="toc-level-3"><a href="#14-3-recomendaciones">14.3. Recomendaciones</a></li>
+<li class="toc-level-2"><a href="#15-seguridad">15. Seguridad</a></li>
+<li class="toc-level-3"><a href="#15-1-usuario-de-operacion">15.1. Usuario de operacion</a></li>
+<li class="toc-level-3"><a href="#15-2-como-cambiar-solo-la-clave-del-operador">15.2. Como cambiar solo la clave del operador</a></li>
+<li class="toc-level-3"><a href="#15-3-lectores-o-usuarios-de-solo-lectura">15.3. Lectores o usuarios de solo lectura</a></li>
+<li class="toc-level-3"><a href="#15-4-como-cargar-o-editar-un-lector">15.4. Como cargar o editar un lector</a></li>
+<li class="toc-level-3"><a href="#15-5-como-cambiar-solo-la-clave-de-un-lector">15.5. Como cambiar solo la clave de un lector</a></li>
+<li class="toc-level-3"><a href="#15-6-como-eliminar-un-lector">15.6. Como eliminar un lector</a></li>
+<li class="toc-level-3"><a href="#15-7-buenas-practicas-de-uso-de-usuarios">15.7. Buenas practicas de uso de usuarios</a></li>
+<li class="toc-level-2"><a href="#16-mensajes-y-confirmaciones">16. Mensajes y confirmaciones</a></li>
+<li class="toc-level-2"><a href="#17-recomendaciones-de-operacion-diaria">17. Recomendaciones de operacion diaria</a></li>
+<li class="toc-level-2"><a href="#18-problemas-comunes-y-que-hacer">18. Problemas comunes y que hacer</a></li>
+<li class="toc-level-3"><a href="#18-1-no-puedo-entrar">18.1. No puedo entrar</a></li>
+<li class="toc-level-3"><a href="#18-2-no-veo-la-opcion-configuracion">18.2. No veo la opcion Configuracion</a></li>
+<li class="toc-level-3"><a href="#18-3-no-puedo-borrar-archivos">18.3. No puedo borrar archivos</a></li>
+<li class="toc-level-3"><a href="#18-4-la-fecha-u-hora-estan-mal">18.4. La fecha u hora estan mal</a></li>
+<li class="toc-level-3"><a href="#18-5-el-equipo-no-conecta-al-wifi-del-sitio">18.5. El equipo no conecta al WiFi del sitio</a></li>
+<li class="toc-level-3"><a href="#18-6-no-se-generan-muestras">18.6. No se generan muestras</a></li>
+<li class="toc-level-2"><a href="#19-buenas-practicas-para-capturas-de-pantalla-del-manual">19. Buenas practicas para capturas de pantalla del manual</a></li>
+<li class="toc-level-2"><a href="#20-resumen-rapido-de-uso">20. Resumen rapido de uso</a></li>
+<li class="toc-level-3"><a href="#usuario-de-solo-lectura">Usuario de solo lectura</a></li>
+<li class="toc-level-3"><a href="#usuario-de-operacion">Usuario de operacion</a></li>
+<li class="toc-level-2"><a href="#21-espacio-final-para-observaciones-internas">21. Espacio final para observaciones internas</a></li>
+        </ul>
+      </div>
+    </section>
+    <main class="manual-body">
+<h2 id="1-objetivo-de-este-manual">1. Objetivo de este manual</h2>
+<p>Este manual explica, paso a paso y en lenguaje simple, como usar la pagina web del equipo <strong>Nariz Metatron</strong>.</p>
+<p>Esta guia esta pensada para:</p>
+<ul>
+<li>operadores de planta
+</li>
+<li>personal de supervision
+</li>
+<li>personal que solo necesita consultar graficos o descargar archivos
+</li>
+</ul>
+<p>Este manual <strong>no</strong> describe funciones reservadas de mantenimiento.</p>
+<hr>
+<h2 id="2-que-es-la-web-del-equipo">2. Que es la web del equipo</h2>
+<p>La web del equipo sirve para:</p>
+<ul>
+<li>ver el estado actual del sistema
+</li>
+<li>ver los valores medidos por los sensores
+</li>
+<li>descargar archivos guardados en la memoria SD
+</li>
+<li>cambiar la programacion de las valvulas
+</li>
+<li>ajustar fecha y hora
+</li>
+<li>cambiar el WiFi del sitio
+</li>
+<li>administrar usuarios operativos y usuarios de consulta
+</li>
+</ul>
+<p>Segun el usuario con el que se ingrese, algunas opciones pueden aparecer y otras no.</p>
+<p>Si una opcion no aparece en pantalla, significa que el usuario actual <strong>no tiene permiso</strong> para esa accion.</p>
+<hr>
+<h2 id="3-formas-de-entrar-a-la-web">3. Formas de entrar a la web</h2>
+<p>La pagina del equipo puede abrirse de dos maneras:</p>
+<h3 id="3-1-entrando-por-la-red-del-sitio">3.1. Entrando por la red del sitio</h3>
+<p>Si el equipo esta conectado al WiFi del lugar, se puede ingresar usando la IP que muestra la propia web en la seccion de red.</p>
+<p>Ejemplo:</p>
+<pre><code>192.168.0.158</code></pre>
+<h3 id="3-2-entrando-por-el-access-point-del-equipo">3.2. Entrando por el Access Point del equipo</h3>
+<p>Si el equipo no esta conectado al WiFi del sitio, se puede ingresar conectandose al punto de acceso del equipo.</p>
+<p>Normalmente la red del equipo aparece con este nombre:</p>
+<pre><code>Nariz-Metatron-Pro</code></pre>
+<p>La clave de acceso por defecto es:</p>
+<pre><code>12345678</code></pre>
+<p>En ese caso, normalmente la IP de acceso es:</p>
+<pre><code>192.168.4.1</code></pre>
+<hr>
+<h2 id="4-antes-de-empezar-a-usarlo">4. Antes de empezar a usarlo</h2>
+<p>Antes de operar, verificar:</p>
+<ul>
+<li>que el equipo este encendido
+</li>
+<li>que el navegador pueda abrir la pagina
+</li>
+<li>que se cuente con un usuario y clave validos
+</li>
+<li>que la fecha y hora del equipo sean correctas si se necesita registro ordenado
+</li>
+</ul>
+<p>Si no se puede entrar o no se conoce el usuario, avisar al responsable designado.</p>
+<hr>
+<h2 id="5-inicio-de-sesion">5. Inicio de sesion</h2>
+<p>Al abrir la pagina aparece una pantalla de ingreso con:</p>
+<ul>
+<li>campo <code>Usuario</code>
+</li>
+<li>campo <code>Clave</code>
+</li>
+<li>boton <code>Entrar</code>
+</li>
+</ul>
+<h3 id="5-1-como-ingresar">5.1. Como ingresar</h3>
+<ol>
+<li>Escribir el usuario.
+</li>
+<li>Escribir la clave.
+</li>
+<li>Presionar <code>Entrar</code>.
+</li>
+</ol>
+<p>Si los datos son correctos, la pantalla principal se abre.</p>
+<p>Si los datos son incorrectos, la pagina vuelve a pedir usuario y clave.</p>
+<h3 id="5-2-tipos-de-usuario-que-puede-ver-un-operario">5.2. Tipos de usuario que puede ver un operario</h3>
+<p>En el uso normal hay dos tipos principales:</p>
+<ul>
+<li><code>Usuario de operacion</code>
+<div class="li-detail">Puede ver graficos, descargar archivos, borrar archivos, cambiar configuracion, cambiar WiFi, ajustar fecha y hora y administrar usuarios operativos.</div>
+</li>
+<li><code>Usuario de solo lectura</code>
+<div class="li-detail">Puede entrar, ver graficos y descargar archivos. No puede borrar archivos ni cambiar configuracion.</div>
+</li>
+</ul>
+<h3 id="5-3-como-saber-con-que-tipo-de-usuario-se-ingreso">5.3. Como saber con que tipo de usuario se ingreso</h3>
+<p>En la parte superior de la pantalla aparece una etiqueta con el rol actual.</p>
+<p>Ejemplos:</p>
+<ul>
+<li><code>Rol: Operador</code>
+</li>
+<li><code>Rol: Solo lectura</code>
+</li>
+</ul>
+<h3 id="5-4-como-cerrar-sesion">5.4. Como cerrar sesion</h3>
+<p>En la parte superior hay un boton <code>Salir</code>.</p>
+<p>Usarlo cuando:</p>
+<ul>
+<li>termina un turno
+</li>
+<li>otra persona va a usar el equipo
+</li>
+<li>se uso una cuenta con permisos de operacion y ya no hace falta
+</li>
+</ul>
+<h3 id="imagen-1-pantalla-de-ingreso">Imagen 1. Pantalla de ingreso</h3>
+<figure class="manual-figure"><img src="manual_usuario_imagenes/Login.png" alt="Pantalla de ingreso a la web"><figcaption>Pantalla de ingreso a la web</figcaption></figure>
+<p>Despues de ingresar correctamente, la web muestra la pantalla principal y en la parte superior indica con que rol se esta trabajando.</p>
+<hr>
+<h2 id="6-vista-general-de-la-pantalla-principal">6. Vista general de la pantalla principal</h2>
+<p>La web tiene tres areas principales:</p>
+<ul>
+<li><code>Graficos</code>
+</li>
+<li><code>Archivos</code>
+</li>
+<li><code>Configuracion</code>
+</li>
+</ul>
+<p>La opcion <code>Configuracion</code> solo aparece si el usuario tiene permiso para operar.</p>
+<p>En la cabecera tambien se ve:</p>
+<ul>
+<li>fecha y hora del equipo
+</li>
+<li>rol del usuario
+</li>
+<li>botones de navegacion
+</li>
+</ul>
+<h3 id="6-1-para-que-sirve-cada-boton-superior">6.1. Para que sirve cada boton superior</h3>
+<ul>
+<li><code>Graficos</code>
+<div class="li-detail">Lleva a la vista donde se observan los valores actuales y la tendencia reciente.</div>
+</li>
+<li><code>Archivos</code>
+<div class="li-detail">Lleva a la lista de archivos CSV guardados en la memoria SD.</div>
+</li>
+<li><code>Configuracion</code>
+<div class="li-detail">Solo aparece para usuarios de operacion. Permite cambiar tiempos, hora, WiFi y usuarios.</div>
+</li>
+<li><code>Salir</code>
+<div class="li-detail">Cierra la sesion actual.</div>
+</li>
+</ul>
+<h3 id="imagen-2-pantalla-principal-completa">Imagen 2. Pantalla principal completa</h3>
+<figure class="manual-figure"><img src="manual_usuario_imagenes/Pantalla pincipal.png" alt="Pantalla principal completa"><figcaption>Pantalla principal completa</figcaption></figure>
+<hr>
+<h2 id="7-panel-estado-del-sistema">7. Panel "Estado del sistema"</h2>
+<p>En este panel se ve el estado actual de funcionamiento.</p>
+<p>Los datos principales son:</p>
+<ul>
+<li><code>Modo</code>
+</li>
+<li><code>Origen actual</code>
+</li>
+<li><code>Valvulas activas</code>
+</li>
+<li><code>Tiempo restante</code>
+</li>
+</ul>
+<h3 id="7-1-significado-de-modo">7.1. Significado de "Modo"</h3>
+<p>Los modos que puede mostrar el sistema son:</p>
+<ul>
+<li><code>MUESTRA</code>
+<div class="li-detail">El equipo esta tomando muestra desde una valvula activa.</div>
+</li>
+<li><code>PURGA</code>
+<div class="li-detail">El equipo esta haciendo purga entre dos muestras distintas.</div>
+</li>
+<li><code>PURGA_IDLE</code>
+<div class="li-detail">No hay valvulas de muestra activas. El sistema queda con purga abierta.</div>
+</li>
+</ul>
+<h3 id="7-2-significado-de-origen-actual">7.2. Significado de "Origen actual"</h3>
+<p>Indica desde que valvula se esta tomando muestra en ese momento.</p>
+<p>Ejemplos:</p>
+<ul>
+<li><code>V1</code>
+</li>
+<li><code>V2</code>
+</li>
+<li><code>V3</code>
+</li>
+<li><code>V4</code>
+</li>
+<li><code>PURGA</code>
+</li>
+<li><code>PURGA_IDLE</code>
+</li>
+</ul>
+<h3 id="7-3-significado-de-valvulas-activas">7.3. Significado de "Valvulas activas"</h3>
+<p>Muestra que valvulas estan habilitadas en la configuracion actual.</p>
+<h3 id="7-4-significado-de-tiempo-restante">7.4. Significado de "Tiempo restante"</h3>
+<p>Muestra cuanto falta para que termine la etapa actual.</p>
+<p>Si aparece <code>Sin cambio automatico</code>, normalmente significa que el sistema esta trabajando de forma continua sin cambio de etapa en ese instante.</p>
+<h3 id="imagen-3-panel-estado-del-sistema">Imagen 3. Panel Estado del sistema</h3>
+<figure class="manual-figure"><img src="manual_usuario_imagenes/Estado del sistema.png" alt="Panel Estado del sistema"><figcaption>Panel Estado del sistema</figcaption></figure>
+<hr>
+<h2 id="8-panel-red-y-firmware">8. Panel "Red y firmware"</h2>
+<p>Este panel informa:</p>
+<ul>
+<li>estado del WiFi del sitio
+</li>
+<li>nombre de la red e IP local
+</li>
+<li>IP del Access Point
+</li>
+<li>version del firmware
+</li>
+<li>estado resumido del sistema de actualizacion
+</li>
+</ul>
+<p>Para el usuario comun, lo mas importante es:</p>
+<ul>
+<li>saber por donde entrar al equipo
+</li>
+<li>confirmar si esta conectado al WiFi
+</li>
+<li>verificar la version activa si fue informado un cambio de software
+</li>
+</ul>
+<h3 id="imagen-4-panel-red-y-firmware">Imagen 4. Panel Red y firmware</h3>
+<figure class="manual-figure"><img src="manual_usuario_imagenes/Red_Firmware.png" alt="Panel Red y firmware"><figcaption>Panel Red y firmware</figcaption></figure>
+<hr>
+<h2 id="9-pantalla-graficos">9. Pantalla "Graficos"</h2>
+<p>En la vista <code>Graficos</code> se muestran las variables medidas por los sensores.</p>
+<p>Actualmente se visualizan:</p>
+<ul>
+<li><code>CO</code>
+</li>
+<li><code>H2S</code>
+</li>
+<li><code>O2</code>
+</li>
+<li><code>CH4</code>
+</li>
+<li><code>CO2</code>
+</li>
+</ul>
+<p>Cada tarjeta muestra:</p>
+<ul>
+<li>el valor actual
+</li>
+<li>un grafico simple con la tendencia reciente
+</li>
+</ul>
+<h3 id="9-1-como-leer-los-graficos">9.1. Como leer los graficos</h3>
+<p>Los graficos sirven para ver si una variable:</p>
+<ul>
+<li>esta estable
+</li>
+<li>esta subiendo
+</li>
+<li>esta bajando
+</li>
+<li>tiene cambios bruscos
+</li>
+</ul>
+<h3 id="9-2-recomendaciones-de-uso">9.2. Recomendaciones de uso</h3>
+<ul>
+<li>mirar primero el valor actual
+</li>
+<li>despues mirar si la tendencia acompana ese valor
+</li>
+<li>si se observa un cambio brusco inesperado, avisar al responsable
+</li>
+</ul>
+<h3 id="imagen-5-pantalla-graficos-completa">Imagen 5. Pantalla Graficos completa</h3>
+<figure class="manual-figure"><img src="manual_usuario_imagenes/Pantalla Grafico general.png" alt="Pantalla Graficos completa"><figcaption>Pantalla Graficos completa</figcaption></figure>
+<h3 id="imagen-6-detalle-de-tarjetas-de-graficos">Imagen 6. Detalle de tarjetas de graficos</h3>
+<figure class="manual-figure"><img src="manual_usuario_imagenes/graficos.png" alt="Detalle de tarjetas de graficos"><figcaption>Detalle de tarjetas de graficos</figcaption></figure>
+<hr>
+<h2 id="10-pantalla-archivos">10. Pantalla "Archivos"</h2>
+<p>En <code>Archivos</code> se ve la lista de archivos CSV guardados en la memoria SD.</p>
+<p>Cada fila muestra:</p>
+<ul>
+<li>nombre del archivo
+</li>
+<li>tamano
+</li>
+<li>acciones disponibles
+</li>
+</ul>
+<h3 id="10-1-descargar-un-archivo">10.1. Descargar un archivo</h3>
+<ol>
+<li>Entrar en <code>Archivos</code>.
+</li>
+<li>Buscar el archivo deseado.
+</li>
+<li>Presionar <code>Descargar</code>.
+</li>
+</ol>
+<p>El navegador descargara el archivo al equipo o telefono desde donde se esta consultando.</p>
+<p>Despues de descargar:</p>
+<ul>
+<li>revisar la carpeta de descargas del dispositivo
+</li>
+<li>confirmar que el archivo se abrio correctamente
+</li>
+<li>si el archivo se va a compartir, renombrarlo solo si no afecta la trazabilidad requerida por la planta
+</li>
+</ul>
+<h3 id="10-2-borrar-un-archivo">10.2. Borrar un archivo</h3>
+<p>Esta accion solo esta disponible para usuarios de operacion.</p>
+<ol>
+<li>Entrar en <code>Archivos</code>.
+</li>
+<li>Buscar el archivo.
+</li>
+<li>Presionar <code>Borrar</code>.
+</li>
+<li>Confirmar la eliminacion.
+</li>
+</ol>
+<h3 id="10-3-recomendacion-importante">10.3. Recomendacion importante</h3>
+<p>Antes de borrar un archivo:</p>
+<ul>
+<li>confirmar que ya fue descargado
+</li>
+<li>confirmar que ya no se necesita
+</li>
+<li>evitar borrar archivos del dia en curso sin autorizacion
+</li>
+</ul>
+<h3 id="imagen-7-pantalla-archivos-completa">Imagen 7. Pantalla Archivos completa</h3>
+<figure class="manual-figure"><img src="manual_usuario_imagenes/Pantalla Archivos General.png" alt="Pantalla Archivos completa"><figcaption>Pantalla Archivos completa</figcaption></figure>
+<h3 id="imagen-8-detalle-del-bloque-de-archivos">Imagen 8. Detalle del bloque de archivos</h3>
+<figure class="manual-figure"><img src="manual_usuario_imagenes/archivos.png" alt="Detalle del bloque de archivos"><figcaption>Detalle del bloque de archivos</figcaption></figure>
+<hr>
+<h2 id="11-pantalla-configuracion">11. Pantalla "Configuracion"</h2>
+<p>La pantalla <code>Configuracion</code> solo esta disponible para usuarios de operacion.</p>
+<p>Dentro de esta pantalla hay varios bloques:</p>
+<ul>
+<li><code>Programa de valvulas</code>
+</li>
+<li><code>Fecha y hora</code>
+</li>
+<li><code>WiFi del sitio</code>
+</li>
+<li><code>Seguridad</code>
+</li>
+</ul>
+<p>La parte de actualizacion remota puede no estar visible para los usuarios operativos comunes.</p>
+<h3 id="imagen-9-pantalla-configuracion-completa">Imagen 9. Pantalla Configuracion completa</h3>
+<figure class="manual-figure"><img src="manual_usuario_imagenes/Pantalla Configuracion General.png" alt="Pantalla Configuracion completa"><figcaption>Pantalla Configuracion completa</figcaption></figure>
+<hr>
+<h2 id="12-programa-de-valvulas">12. Programa de valvulas</h2>
+<p>En este bloque se define:</p>
+<ul>
+<li>cuanto tiempo muestrea cada valvula
+</li>
+<li>cuanto dura la purga entre muestras
+</li>
+</ul>
+<p>Cada valvula tiene un campo en segundos.</p>
+<h3 id="12-1-como-funciona-el-valor-de-cada-valvula">12.1. Como funciona el valor de cada valvula</h3>
+<ul>
+<li><code>0</code> significa valvula deshabilitada
+</li>
+<li>de <code>30</code> a <code>86400</code> significa valvula habilitada
+</li>
+</ul>
+<p><code>86400</code> segundos equivalen a <code>24 horas</code>.</p>
+<h3 id="12-2-regla-de-purga">12.2. Regla de purga</h3>
+<p>El campo <code>Purga entre muestras</code> tambien se carga en segundos.</p>
+<p>Reglas:</p>
+<ul>
+<li>si hay <code>0</code> valvulas activas, el equipo queda en <code>PURGA_IDLE</code>
+</li>
+<li>si hay <code>1</code> sola valvula activa, el equipo trabaja continuo y la purga puede quedar en <code>0</code>
+</li>
+<li>si hay <code>2</code> o mas valvulas activas, la purga debe ser como minimo de <code>30 segundos</code>
+</li>
+</ul>
+<h3 id="12-3-como-cambiar-la-programacion">12.3. Como cambiar la programacion</h3>
+<ol>
+<li>Entrar en <code>Configuracion</code>.
+</li>
+<li>Ir al bloque <code>Programa de valvulas</code>.
+</li>
+<li>Cargar los tiempos deseados.
+</li>
+<li>Presionar <code>Guardar configuracion</code>.
+</li>
+</ol>
+<p>Despues de guardar:</p>
+<ol>
+<li>esperar el mensaje de confirmacion
+</li>
+<li>volver al panel principal
+</li>
+<li>revisar <code>Modo</code>, <code>Origen actual</code> y <code>Valvulas activas</code>
+</li>
+<li>confirmar que la secuencia coincida con lo que se quiso programar
+</li>
+</ol>
+<h3 id="12-4-ejemplos-practicos">12.4. Ejemplos practicos</h3>
+<p>Ejemplo A:</p>
+<pre><code>Valvula 1 = 60
+Valvula 2 = 0
+Valvula 3 = 0
+Valvula 4 = 0
+Purga = 0</code></pre>
+<p>Resultado:</p>
+<ul>
+<li>solo toma muestra de V1
+</li>
+<li>trabaja continuo
+</li>
+<li>no hace purga entre ciclos
+</li>
+</ul>
+<p>Ejemplo B:</p>
+<pre><code>Valvula 1 = 30
+Valvula 2 = 45
+Valvula 3 = 0
+Valvula 4 = 60
+Purga = 30</code></pre>
+<p>Resultado:</p>
+<ul>
+<li>toma muestra de V1, V2 y V4
+</li>
+<li>hace purga entre una muestra y la siguiente
+</li>
+</ul>
+<h3 id="12-5-recomendaciones-importantes">12.5. Recomendaciones importantes</h3>
+<ul>
+<li>si no se desea usar una valvula, escribir <code>0</code>
+</li>
+<li>no dejar tiempos dudosos o cargados por error
+</li>
+<li>si todas las valvulas quedan en <code>0</code>, el sistema no toma muestras normales
+</li>
+<li>despues de cada cambio, controlar unos minutos el panel principal
+</li>
+</ul>
+<h3 id="imagen-10-bloque-programa-de-valvulas">Imagen 10. Bloque Programa de valvulas</h3>
+<figure class="manual-figure"><img src="manual_usuario_imagenes/Programa valvula.png" alt="Bloque Programa de valvulas"><figcaption>Bloque Programa de valvulas</figcaption></figure>
+<hr>
+<h2 id="13-fecha-y-hora">13. Fecha y hora</h2>
+<p>Este bloque se usa para corregir la fecha y hora del equipo.</p>
+<p>Es importante porque:</p>
+<ul>
+<li>los archivos de la SD se guardan con fecha
+</li>
+<li>los registros deben quedar ordenados correctamente
+</li>
+</ul>
+<h3 id="13-1-ajuste-manual">13.1. Ajuste manual</h3>
+<ol>
+<li>Cargar la fecha.
+</li>
+<li>Cargar la hora.
+</li>
+<li>Presionar <code>Guardar fecha y hora</code>.
+</li>
+</ol>
+<h3 id="13-2-usar-hora-del-dispositivo">13.2. Usar hora del dispositivo</h3>
+<p>Si el telefono o la PC tienen la hora correcta:</p>
+<ol>
+<li>Presionar <code>Usar hora del dispositivo</code>.
+</li>
+<li>Verificar el mensaje de confirmacion.
+</li>
+</ol>
+<h3 id="13-3-cuando-conviene-revisar-la-hora">13.3. Cuando conviene revisar la hora</h3>
+<ul>
+<li>despues de una parada larga
+</li>
+<li>si la fecha mostrada no coincide con la real
+</li>
+<li>si los archivos aparecen desordenados por fecha
+</li>
+</ul>
+<h3 id="imagen-11-bloque-fecha-y-hora">Imagen 11. Bloque Fecha y hora</h3>
+<figure class="manual-figure"><img src="manual_usuario_imagenes/Fecha y hora.png" alt="Bloque Fecha y hora"><figcaption>Bloque Fecha y hora</figcaption></figure>
+<hr>
+<h2 id="14-wifi-del-sitio">14. WiFi del sitio</h2>
+<p>Este bloque sirve para conectar el equipo al WiFi del lugar.</p>
+<h3 id="14-1-como-cargar-una-red-wifi">14.1. Como cargar una red WiFi</h3>
+<ol>
+<li>Escribir el nombre de la red en <code>SSID</code>.
+</li>
+<li>Escribir la clave de la red en <code>Clave WiFi</code>.
+</li>
+<li>Presionar <code>Guardar WiFi</code>.
+</li>
+</ol>
+<h3 id="14-2-que-pasa-si-se-deja-vacio-el-ssid">14.2. Que pasa si se deja vacio el SSID</h3>
+<p>Si el campo <code>SSID</code> se deja vacio y se guarda:</p>
+<ul>
+<li>el equipo deja de intentar conectarse a la red del sitio
+</li>
+<li>queda disponible solo por su Access Point
+</li>
+</ul>
+<h3 id="14-3-recomendaciones">14.3. Recomendaciones</h3>
+<ul>
+<li>escribir exactamente el nombre de la red
+</li>
+<li>revisar mayusculas y minusculas en la clave si corresponde
+</li>
+<li>esperar unos segundos despues de guardar
+</li>
+<li>confirmar el resultado mirando el panel <code>Red y firmware</code>
+</li>
+</ul>
+<h3 id="imagen-12-bloque-wifi-del-sitio">Imagen 12. Bloque WiFi del sitio</h3>
+<figure class="manual-figure"><img src="manual_usuario_imagenes/Wifi.png" alt="Bloque WiFi del sitio"><figcaption>Bloque WiFi del sitio</figcaption></figure>
+<hr>
+<h2 id="15-seguridad">15. Seguridad</h2>
+<p>Este bloque sirve para administrar usuarios operativos y usuarios de consulta.</p>
+<h3 id="15-1-usuario-de-operacion">15.1. Usuario de operacion</h3>
+<p>En la pantalla se muestra si ya existe un operador y cual es su nombre.</p>
+<p>Acciones posibles:</p>
+<ul>
+<li>crear un operador nuevo
+</li>
+<li>cambiar usuario del operador
+</li>
+<li>cambiar la clave del operador
+</li>
+<li>eliminar el operador
+</li>
+</ul>
+<h3 id="15-2-como-cambiar-solo-la-clave-del-operador">15.2. Como cambiar solo la clave del operador</h3>
+<ol>
+<li>Dejar el mismo nombre de usuario.
+</li>
+<li>Escribir una clave nueva.
+</li>
+<li>Presionar <code>Guardar operador</code>.
+</li>
+</ol>
+<p>Si quien hace el cambio esta logueado como operador, la web mantiene la sesion con la clave nueva.</p>
+<p>Si se elimina el operador actual mientras esta usando la web, la sesion se cerrara y habra que volver a ingresar con otro usuario autorizado.</p>
+<h3 id="15-3-lectores-o-usuarios-de-solo-lectura">15.3. Lectores o usuarios de solo lectura</h3>
+<p>La pantalla permite administrar <code>Lector 1</code>, <code>Lector 2</code> y <code>Lector 3</code>.</p>
+<p>Cada lector:</p>
+<ul>
+<li>puede entrar a la web
+</li>
+<li>puede ver graficos
+</li>
+<li>puede descargar archivos
+</li>
+<li>no puede borrar
+</li>
+<li>no puede cambiar configuracion
+</li>
+</ul>
+<h3 id="15-4-como-cargar-o-editar-un-lector">15.4. Como cargar o editar un lector</h3>
+<ol>
+<li>En <code>Lector a editar</code>, elegir <code>1</code>, <code>2</code> o <code>3</code>.
+</li>
+<li>Verificar si ese lector esta libre o ya tiene un nombre.
+</li>
+<li>Escribir usuario.
+</li>
+<li>Escribir clave.
+</li>
+<li>Presionar <code>Guardar lector</code>.
+</li>
+</ol>
+<h3 id="15-5-como-cambiar-solo-la-clave-de-un-lector">15.5. Como cambiar solo la clave de un lector</h3>
+<ol>
+<li>Elegir el lector correspondiente.
+</li>
+<li>Dejar el mismo usuario.
+</li>
+<li>Escribir la clave nueva.
+</li>
+<li>Presionar <code>Guardar lector</code>.
+</li>
+</ol>
+<h3 id="15-6-como-eliminar-un-lector">15.6. Como eliminar un lector</h3>
+<ol>
+<li>Elegir el lector.
+</li>
+<li>Presionar <code>Eliminar lector</code>.
+</li>
+</ol>
+<h3 id="15-7-buenas-practicas-de-uso-de-usuarios">15.7. Buenas practicas de uso de usuarios</h3>
+<ul>
+<li>usar nombres simples y faciles de recordar
+</li>
+<li>no repetir usuarios entre distintas personas
+</li>
+<li>cambiar claves si hubo cambio de personal
+</li>
+<li>entregar a cada usuario solo el acceso que realmente necesita
+</li>
+</ul>
+<h3 id="imagen-13-bloque-seguridad">Imagen 13. Bloque Seguridad</h3>
+<figure class="manual-figure"><img src="manual_usuario_imagenes/Seguridad.png" alt="Bloque Seguridad"><figcaption>Bloque Seguridad</figcaption></figure>
+<hr>
+<h2 id="16-mensajes-y-confirmaciones">16. Mensajes y confirmaciones</h2>
+<p>Debajo de cada bloque suele aparecer un mensaje.</p>
+<p>Ese mensaje indica si la accion:</p>
+<ul>
+<li>salio bien
+</li>
+<li>tuvo un error
+</li>
+<li>necesita revisar algun dato
+</li>
+</ul>
+<p>Ejemplos:</p>
+<ul>
+<li><code>Configuracion guardada</code>
+</li>
+<li><code>WiFi guardado. Intentando conectar.</code>
+</li>
+<li><code>Hora actualizada</code>
+</li>
+<li><code>Usuario operador actualizado</code>
+</li>
+<li><code>Usuario de solo lectura guardado</code>
+</li>
+</ul>
+<hr>
+<h2 id="17-recomendaciones-de-operacion-diaria">17. Recomendaciones de operacion diaria</h2>
+<ul>
+<li>entrar siempre con el usuario correspondiente al trabajo a realizar
+</li>
+<li>no usar un usuario de operacion si solo se van a mirar graficos
+</li>
+<li>revisar fecha y hora si los archivos no parecen correctos
+</li>
+<li>no borrar archivos sin confirmar antes la descarga
+</li>
+<li>despues de cambiar la programacion de valvulas, mirar el panel de estado para confirmar que la secuencia sea la esperada
+</li>
+<li>al terminar, salir de la sesion
+</li>
+</ul>
+<hr>
+<h2 id="18-problemas-comunes-y-que-hacer">18. Problemas comunes y que hacer</h2>
+<h3 id="18-1-no-puedo-entrar">18.1. No puedo entrar</h3>
+<p>Revisar:</p>
+<ul>
+<li>que el usuario este bien escrito
+</li>
+<li>que la clave este bien escrita
+</li>
+<li>que el equipo este accesible por IP
+</li>
+<li>que el navegador siga conectado a la red correcta
+</li>
+</ul>
+<p>Si sigue sin entrar, avisar al responsable.</p>
+<h3 id="18-2-no-veo-la-opcion-configuracion">18.2. No veo la opcion Configuracion</h3>
+<p>Probablemente el usuario actual es de solo lectura.</p>
+<h3 id="18-3-no-puedo-borrar-archivos">18.3. No puedo borrar archivos</h3>
+<p>Probablemente el usuario actual no tiene permiso de borrado.</p>
+<h3 id="18-4-la-fecha-u-hora-estan-mal">18.4. La fecha u hora estan mal</h3>
+<p>Entrar en <code>Configuracion</code>, bloque <code>Fecha y hora</code>, y corregir usando:</p>
+<ul>
+<li>carga manual
+</li>
+<li>o <code>Usar hora del dispositivo</code>
+</li>
+</ul>
+<h3 id="18-5-el-equipo-no-conecta-al-wifi-del-sitio">18.5. El equipo no conecta al WiFi del sitio</h3>
+<p>Revisar:</p>
+<ul>
+<li>nombre de red
+</li>
+<li>clave
+</li>
+<li>distancia o calidad de senal
+</li>
+</ul>
+<p>Mientras tanto, se puede seguir entrando por el Access Point del equipo.</p>
+<h3 id="18-6-no-se-generan-muestras">18.6. No se generan muestras</h3>
+<p>Revisar en <code>Programa de valvulas</code>:</p>
+<ul>
+<li>si las valvulas estan en <code>0</code>
+</li>
+<li>si la configuracion fue guardada correctamente
+</li>
+</ul>
+<p>Si todas las valvulas estan en <code>0</code>, el equipo queda en purga sin hacer muestreo normal.</p>
+<hr>
+<h2 id="19-buenas-practicas-para-capturas-de-pantalla-del-manual">19. Buenas practicas para capturas de pantalla del manual</h2>
+<p>Al agregar imagenes a este manual:</p>
+<ul>
+<li>no mostrar usuarios sensibles
+</li>
+<li>no mostrar claves
+</li>
+<li>evitar mostrar informacion interna reservada
+</li>
+<li>usar capturas claras, bien recortadas y legibles
+</li>
+<li>si hay datos sensibles, taparlos antes de insertar la imagen
+</li>
+</ul>
+<hr>
+<h2 id="20-resumen-rapido-de-uso">20. Resumen rapido de uso</h2>
+<h3 id="usuario-de-solo-lectura">Usuario de solo lectura</h3>
+<ol>
+<li>Ingresar.
+</li>
+<li>Ver <code>Graficos</code>.
+</li>
+<li>Entrar a <code>Archivos</code> si hace falta descargar.
+</li>
+<li>Salir.
+</li>
+</ol>
+<h3 id="usuario-de-operacion">Usuario de operacion</h3>
+<ol>
+<li>Ingresar.
+</li>
+<li>Revisar estado del sistema.
+</li>
+<li>Cambiar configuraciones si es necesario.
+</li>
+<li>Confirmar mensajes de guardado.
+</li>
+<li>Revisar que el sistema quede en el estado esperado.
+</li>
+<li>Salir.
+</li>
+</ol>
+<hr>
+<h2 id="21-espacio-final-para-observaciones-internas">21. Espacio final para observaciones internas</h2>
+<p>Agregar aqui notas propias de la planta, por ejemplo:</p>
+<ul>
+<li>nombre del responsable por turno
+</li>
+<li>procedimiento local de respaldo de archivos
+</li>
+<li>politica local de cambio de claves
+</li>
+<li>red WiFi habitual del sector
+</li>
+</ul>
+<p><strong>Espacio para captura agregada por la planta</strong></p>
+<p>Si hace falta, agregar aqui una captura propia de la planta para reforzar la capacitacion o documentar algun procedimiento interno del sector.</p>
+    </main>
+    <section class="blank-page" aria-hidden="true"></section>
+  </div>
+</body>
+</html>

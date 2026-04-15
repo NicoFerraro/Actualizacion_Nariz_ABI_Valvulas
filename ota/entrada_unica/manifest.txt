@@ -1,0 +1,3 @@
+version=1.0.0
+firmware_url=https://github.com/NicoFerraro/Actualizacion_Nariz_ABI_Valvulas/releases/download/entrada-unica-v1.0.0/firmware.bin
+sha256=030B90B9154ECCAD0BCC9E8191D3FB6438E8BA9F377B69BB93773A52C703D24D
