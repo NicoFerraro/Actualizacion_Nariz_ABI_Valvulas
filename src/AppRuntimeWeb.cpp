@@ -10,8 +10,92 @@ namespace {
 constexpr uint32_t kMinDurationMs = 30000UL;
 constexpr uint32_t kMaxDurationMs = 86400000UL;
 constexpr uint32_t kOtaCheckIntervalMs = 3600000UL;
+constexpr uint32_t kPendingRestartDelayMs = 750UL;
+constexpr uint32_t kMinMqttPublishIntervalMs = 250UL;
+constexpr uint32_t kMaxMqttPublishIntervalMs = 3600000UL;
 constexpr char kMasterUser[] = "admin";
 constexpr char kMasterPassword[] = "admin";
+constexpr long kGmtOffsetSec = -10800;
+
+String getParamValue(AsyncWebServerRequest* request, const char* name) {
+  if (request->hasParam(name, true)) {
+    return request->getParam(name, true)->value();
+  }
+  if (request->hasParam(name)) {
+    return request->getParam(name)->value();
+  }
+  return "";
+}
+
+bool parseBooleanText(const String& rawValue, bool& parsedValue) {
+  String value = rawValue;
+  value.trim();
+  value.toLowerCase();
+  if (value == "1" || value == "true" || value == "on" || value == "yes" || value == "si") {
+    parsedValue = true;
+    return true;
+  }
+  if (value == "0" || value == "false" || value == "off" || value == "no") {
+    parsedValue = false;
+    return true;
+  }
+  return false;
+}
+
+bool parseDhcpModeText(const String& rawValue, bool& useDhcp) {
+  String value = rawValue;
+  value.trim();
+  value.toLowerCase();
+  if (value == "dhcp") {
+    useDhcp = true;
+    return true;
+  }
+  if (value == "static" || value == "fija") {
+    useDhcp = false;
+    return true;
+  }
+  return false;
+}
+
+bool parseUint16Text(const String& rawValue, uint16_t minValue, uint16_t maxValue, uint16_t& parsedValue) {
+  String value = rawValue;
+  value.trim();
+  if (value.isEmpty()) {
+    return false;
+  }
+  for (size_t index = 0; index < value.length(); ++index) {
+    if (!isDigit(static_cast<unsigned char>(value[index]))) {
+      return false;
+    }
+  }
+
+  const unsigned long parsed = strtoul(value.c_str(), nullptr, 10);
+  if (parsed < minValue || parsed > maxValue) {
+    return false;
+  }
+  parsedValue = static_cast<uint16_t>(parsed);
+  return true;
+}
+
+bool parseUint32Text(const String& rawValue, uint32_t minValue, uint32_t maxValue, uint32_t& parsedValue) {
+  String value = rawValue;
+  value.trim();
+  if (value.isEmpty()) {
+    return false;
+  }
+  for (size_t index = 0; index < value.length(); ++index) {
+    if (!isDigit(static_cast<unsigned char>(value[index]))) {
+      return false;
+    }
+  }
+
+  const unsigned long parsed = strtoul(value.c_str(), nullptr, 10);
+  if (parsed < minValue || parsed > maxValue) {
+    return false;
+  }
+  parsedValue = static_cast<uint32_t>(parsed);
+  return true;
+}
 
 }
 
@@ -60,6 +144,155 @@ bool AppRuntime::isAccountConfigured(const UserAccount& account) {
 
 bool AppRuntime::userNamesEqual(const String& left, const String& right) {
   return left.equalsIgnoreCase(right);
+}
+
+bool AppRuntime::validateDeviceId(String& deviceId, String& error) {
+  deviceId.trim();
+  if (deviceId.isEmpty()) {
+    error = "El device_id no puede quedar vacio";
+    return false;
+  }
+  if (deviceId.length() > 63) {
+    error = "El device_id no puede superar 63 caracteres";
+    return false;
+  }
+
+  for (size_t index = 0; index < deviceId.length(); ++index) {
+    const char character = deviceId[index];
+    if (isAlphaNumeric(static_cast<unsigned char>(character)) ||
+        character == '-' || character == '_' || character == '.') {
+      continue;
+    }
+    error = "El device_id solo admite letras, numeros, guion, guion bajo y punto";
+    return false;
+  }
+
+  return true;
+}
+
+bool AppRuntime::applyNetworkInterfaceConfig(NetworkInterfaceConfig& config,
+                                             bool enabled,
+                                             bool useDhcp,
+                                             const String& ipRaw,
+                                             const String& maskRaw,
+                                             const String& gatewayRaw,
+                                             const String& dns1Raw,
+                                             const String& dns2Raw,
+                                             String& error) {
+  auto parseIp = [&error](const String& rawValue, const char* fieldName, bool required, IPAddress& target) -> bool {
+    String value = rawValue;
+    value.trim();
+    if (value.isEmpty()) {
+      if (!required) {
+        return true;
+      }
+      error = String("Falta ") + fieldName;
+      return false;
+    }
+
+    IPAddress parsedAddress;
+    if (!parsedAddress.fromString(value)) {
+      error = String("IP invalida en ") + fieldName;
+      return false;
+    }
+    target = parsedAddress;
+    return true;
+  };
+
+  config.enabled = enabled;
+  config.useDhcp = useDhcp;
+
+  if (useDhcp) {
+    if (!parseIp(ipRaw, "IP", false, config.ipAddress) ||
+        !parseIp(maskRaw, "mascara", false, config.subnetMask) ||
+        !parseIp(gatewayRaw, "gateway", false, config.gateway) ||
+        !parseIp(dns1Raw, "DNS 1", false, config.dns1) ||
+        !parseIp(dns2Raw, "DNS 2", false, config.dns2)) {
+      return false;
+    }
+    return true;
+  }
+
+  if (!parseIp(ipRaw, "IP", true, config.ipAddress) ||
+      !parseIp(maskRaw, "mascara", true, config.subnetMask) ||
+      !parseIp(gatewayRaw, "gateway", true, config.gateway) ||
+      !parseIp(dns1Raw, "DNS 1", true, config.dns1) ||
+      !parseIp(dns2Raw, "DNS 2", true, config.dns2)) {
+    return false;
+  }
+  return true;
+}
+
+bool AppRuntime::validateMqttConfigValues(bool enabled,
+                                          String& brokerHost,
+                                          uint16_t brokerPort,
+                                          String& clientId,
+                                          String& topicRoot,
+                                          uint32_t publishIntervalMs,
+                                          String& error) {
+  brokerHost.trim();
+  clientId.trim();
+  topicRoot.trim();
+
+  if (clientId.isEmpty()) {
+    clientId = runtimeConfig.deviceId;
+  }
+
+  if (publishIntervalMs < kMinMqttPublishIntervalMs || publishIntervalMs > kMaxMqttPublishIntervalMs) {
+    error = "El intervalo MQTT debe estar entre 250 y 3600000 ms";
+    return false;
+  }
+
+  if (!enabled) {
+    if (brokerHost.isEmpty()) {
+      brokerHost = app_variant::kDefaultMqttBrokerHost;
+    }
+    if (topicRoot.isEmpty()) {
+      topicRoot = app_variant::kDefaultMqttTopicRoot;
+    }
+    return true;
+  }
+
+  if (brokerHost.isEmpty()) {
+    error = "Falta broker MQTT";
+    return false;
+  }
+
+  if (brokerPort == 0) {
+    error = "Puerto MQTT invalido";
+    return false;
+  }
+
+  if (topicRoot.isEmpty()) {
+    error = "Falta topic root MQTT";
+    return false;
+  }
+
+  if (clientId.isEmpty()) {
+    error = "Falta client_id MQTT";
+    return false;
+  }
+
+  return true;
+}
+
+bool AppRuntime::validateOtaConfigValues(bool enabled, String& manifestUrl, String& error) {
+  manifestUrl.trim();
+  if (!enabled) {
+    return true;
+  }
+
+  if (manifestUrl.isEmpty()) {
+    error = "Falta URL del manifest OTA";
+    return false;
+  }
+
+  if (!manifestUrl.startsWith("http://") && !manifestUrl.startsWith("https://")) {
+    error = "La URL del manifest OTA debe comenzar con http:// o https://";
+    return false;
+  }
+
+  return true;
 }
 
 bool AppRuntime::validateUserAccount(const String& username, const String& password, bool allowEmpty, String& error) {
@@ -225,9 +458,50 @@ String AppRuntime::sanitizeCsvFileName(const String& rawName) {
   return fileName;
 }
 
+String AppRuntime::getCsvDownloadName(const String& fileName) {
+  const int slashIndex = fileName.lastIndexOf('/');
+  return slashIndex >= 0 ? fileName.substring(slashIndex + 1) : fileName;
+}
+
+String AppRuntime::buildStorageFileListJson() {
+  return storageManager.buildCsvListJson();
+}
+
+bool AppRuntime::sendCsvFileResponse(AsyncWebServerRequest* request, const String& fileName, bool download) {
+  auto file = storageManager.openRead(fileName);
+  if (!file) {
+    request->send(404, "text/plain", "Archivo inexistente");
+    return false;
+  }
+
+  const size_t fileSize = static_cast<size_t>(file->size());
+  AsyncWebServerResponse* response = request->beginResponse(
+      "text/csv",
+      fileSize,
+      [file](uint8_t* buffer, size_t maxLen, size_t index) -> size_t {
+        (void)index;
+        const int bytesRead = file->read(buffer, maxLen);
+        if (bytesRead <= 0) {
+          file->close();
+          return 0;
+        }
+        return static_cast<size_t>(bytesRead);
+      });
+
+  if (download) {
+    response->addHeader("Content-Disposition", String("attachment; filename=\"") + getCsvDownloadName(fileName) + "\"");
+  }
+
+  request->send(response);
+  return true;
+}
+
 String AppRuntime::buildConfigJson() {
   String json = "{";
   json += "\"productName\":\"" + jsonEscape(String(app_variant::kProductName)) + "\"";
+  json += ",\"deviceId\":\"" + jsonEscape(runtimeConfig.deviceId) + "\"";
+  json += ",\"variant\":\"" + jsonEscape(getVariantName()) + "\"";
+  json += ",\"accessPointSSID\":\"" + jsonEscape(String(app_variant::kAccessPointSsid)) + "\"";
   json += ",\"supportsValveConfig\":" + String(app_variant::kSupportsValveControl ? "true" : "false");
   json += ",\"samplingTitle\":\"" + jsonEscape(app_variant::kSupportsValveControl ? "Programa de valvulas" : "Muestreo continuo") + "\"";
   json += ",\"samplingDescription\":\"" + jsonEscape(app_variant::kSupportsValveControl
@@ -239,6 +513,29 @@ String AppRuntime::buildConfigJson() {
   json += ",\"v4\":" + String(runtimeConfig.sampleTimeMs[3] / 1000UL);
   json += ",\"purge\":" + String(runtimeConfig.purgeTimeMs / 1000UL);
   json += ",\"wifiSSID\":\"" + jsonEscape(runtimeConfig.wifiSsid) + "\"";
+  json += ",\"wifiSTAEnabled\":" + String(runtimeConfig.wifiSta.enabled ? "true" : "false");
+  json += ",\"wifiSTAMode\":\"" + jsonEscape(runtimeConfig.wifiSta.useDhcp ? "dhcp" : "static") + "\"";
+  json += ",\"wifiSTAIP\":\"" + jsonEscape(ipAddressToString(runtimeConfig.wifiSta.ipAddress)) + "\"";
+  json += ",\"wifiSTAMask\":\"" + jsonEscape(ipAddressToString(runtimeConfig.wifiSta.subnetMask)) + "\"";
+  json += ",\"wifiSTAGateway\":\"" + jsonEscape(ipAddressToString(runtimeConfig.wifiSta.gateway)) + "\"";
+  json += ",\"wifiSTADns1\":\"" + jsonEscape(ipAddressToString(runtimeConfig.wifiSta.dns1)) + "\"";
+  json += ",\"wifiSTADns2\":\"" + jsonEscape(ipAddressToString(runtimeConfig.wifiSta.dns2)) + "\"";
+  json += ",\"ethernetEnabled\":" + String(runtimeConfig.ethernet.enabled ? "true" : "false");
+  json += ",\"ethernetMode\":\"" + jsonEscape(runtimeConfig.ethernet.useDhcp ? "dhcp" : "static") + "\"";
+  json += ",\"ethernetIP\":\"" + jsonEscape(ipAddressToString(runtimeConfig.ethernet.ipAddress)) + "\"";
+  json += ",\"ethernetMask\":\"" + jsonEscape(ipAddressToString(runtimeConfig.ethernet.subnetMask)) + "\"";
+  json += ",\"ethernetGateway\":\"" + jsonEscape(ipAddressToString(runtimeConfig.ethernet.gateway)) + "\"";
+  json += ",\"ethernetDns1\":\"" + jsonEscape(ipAddressToString(runtimeConfig.ethernet.dns1)) + "\"";
+  json += ",\"ethernetDns2\":\"" + jsonEscape(ipAddressToString(runtimeConfig.ethernet.dns2)) + "\"";
+  json += ",\"ethernetUseCustomMac\":" + String(runtimeConfig.ethernet.useCustomMac ? "true" : "false");
+  json += ",\"ethernetMacAddress\":\"" + jsonEscape(runtimeConfig.ethernet.macAddress) + "\"";
+  json += ",\"ethernetCurrentMac\":\"" + jsonEscape(buildEthernetSnapshot().macAddress) + "\"";
+  json += ",\"mqttEnabled\":" + String(runtimeConfig.mqtt.enabled ? "true" : "false");
+  json += ",\"mqttBrokerHost\":\"" + jsonEscape(runtimeConfig.mqtt.brokerHost) + "\"";
+  json += ",\"mqttBrokerPort\":" + String(runtimeConfig.mqtt.brokerPort);
+  json += ",\"mqttClientId\":\"" + jsonEscape(runtimeConfig.mqtt.clientId) + "\"";
+  json += ",\"mqttTopicRoot\":\"" + jsonEscape(runtimeConfig.mqtt.topicRoot) + "\"";
+  json += ",\"mqttPublishIntervalMs\":" + String(runtimeConfig.mqtt.publishIntervalMs);
   json += ",\"operatorUser\":\"" + jsonEscape(runtimeConfig.operatorAccount.username) + "\"";
   json += ",\"viewer1User\":\"" + jsonEscape(runtimeConfig.viewerAccounts[0].username) + "\"";
   json += ",\"viewer2User\":\"" + jsonEscape(runtimeConfig.viewerAccounts[1].username) + "\"";
@@ -600,6 +897,34 @@ void AppRuntime::setupWebServer() {
     request->send(200, "application/json", buildDataJson());
   });
 
+  server.on("/api/v1/telemetry", HTTP_GET, [this](AsyncWebServerRequest* request) {
+    if (!ensurePermission(request, Permission::ViewData)) {
+      return;
+    }
+    request->send(200, "application/json", buildMqttTelemetryJson());
+  });
+
+  server.on("/api/v1/status", HTTP_GET, [this](AsyncWebServerRequest* request) {
+    if (!ensurePermission(request, Permission::ViewData)) {
+      return;
+    }
+    request->send(200, "application/json", buildMqttStatusJson());
+  });
+
+  server.on("/api/v1/config", HTTP_GET, [this](AsyncWebServerRequest* request) {
+    if (!ensurePermission(request, Permission::ManageConfig)) {
+      return;
+    }
+    request->send(200, "application/json", buildMqttCurrentConfigJson());
+  });
+
+  server.on("/api/v1/files", HTTP_GET, [this](AsyncWebServerRequest* request) {
+    if (!ensurePermission(request, Permission::ViewData)) {
+      return;
+    }
+    request->send(200, "application/json", buildStorageFileListJson());
+  });
+
   server.on("/config", HTTP_GET, [this](AsyncWebServerRequest* request) {
     if (!ensurePermission(request, Permission::ManageConfig)) {
       return;
@@ -607,14 +932,10 @@ void AppRuntime::setupWebServer() {
     request->send(200, "application/json", buildConfigJson());
   });
 
-  server.on("/config/save", HTTP_POST, [this](AsyncWebServerRequest* request) {
-    if (!ensurePermission(request, Permission::ManageConfig)) {
-      return;
-    }
-
+  auto applyValveConfigRequest = [this](AsyncWebServerRequest* request, String& message) -> bool {
     if (!app_variant::kSupportsValveControl) {
-      request->send(200, "text/plain", "Esta variante trabaja en muestreo continuo.");
-      return;
+      message = "Esta variante trabaja en muestreo continuo.";
+      return true;
     }
 
     uint32_t newSampleTimes[4];
@@ -622,8 +943,8 @@ void AppRuntime::setupWebServer() {
     for (size_t i = 0; i < 4; ++i) {
       const String paramName = "v" + String(i + 1);
       if (!parseSecondsParam(request, paramName.c_str(), true, newSampleTimes[i])) {
-        request->send(400, "text/plain", "Tiempo de valvula invalido");
-        return;
+        message = "Tiempo de valvula invalido";
+        return false;
       }
       if (newSampleTimes[i] >= kMinDurationMs) {
         ++enabledValveCount;
@@ -632,13 +953,13 @@ void AppRuntime::setupWebServer() {
 
     uint32_t newPurgeTimeMs = 0;
     if (!parseSecondsParam(request, "purge", true, newPurgeTimeMs)) {
-      request->send(400, "text/plain", "Tiempo de purga invalido");
-      return;
+      message = "Tiempo de purga invalido";
+      return false;
     }
 
     if (enabledValveCount > 1 && newPurgeTimeMs < kMinDurationMs) {
-      request->send(400, "text/plain", "Con 2 o mas valvulas activas la purga debe ser de 30 a 86400 segundos");
-      return;
+      message = "Con 2 o mas valvulas activas la purga debe ser de 30 a 86400 segundos";
+      return false;
     }
 
     for (size_t i = 0; i < 4; ++i) {
@@ -647,7 +968,227 @@ void AppRuntime::setupWebServer() {
     runtimeConfig.purgeTimeMs = newPurgeTimeMs;
     saveOperationalConfig();
     applyStoredConfigToStateMachine();
-    request->send(200, "text/plain", "Configuracion guardada");
+    publishMqttCurrentConfig(true);
+    publishMqttStatus(true);
+    publishMqttTelemetry(true);
+    message = "Configuracion guardada";
+    return true;
+  };
+
+  auto applyNetworkConfigRequest = [this](AsyncWebServerRequest* request, String& message) -> bool {
+    const String previousDeviceId = runtimeConfig.deviceId;
+    String newDeviceId = getParamValue(request, "device_id");
+    if (newDeviceId.isEmpty()) {
+      newDeviceId = runtimeConfig.deviceId;
+    }
+
+    bool newStaEnabled = runtimeConfig.wifiSta.enabled;
+    const String staEnabledRaw = getParamValue(request, "sta_enabled");
+    if (!staEnabledRaw.isEmpty() && !parseBooleanText(staEnabledRaw, newStaEnabled)) {
+      message = "Valor invalido para habilitar WiFi STA";
+      return false;
+    }
+
+    bool newStaUseDhcp = runtimeConfig.wifiSta.useDhcp;
+    const String staModeRaw = getParamValue(request, "sta_mode");
+    if (!staModeRaw.isEmpty() && !parseDhcpModeText(staModeRaw, newStaUseDhcp)) {
+      message = "Modo WiFi STA invalido";
+      return false;
+    }
+
+    bool newEthernetEnabled = runtimeConfig.ethernet.enabled;
+    const String ethEnabledRaw = getParamValue(request, "eth_enabled");
+    if (!ethEnabledRaw.isEmpty() && !parseBooleanText(ethEnabledRaw, newEthernetEnabled)) {
+      message = "Valor invalido para habilitar Ethernet";
+      return false;
+    }
+
+    bool newEthernetUseDhcp = runtimeConfig.ethernet.useDhcp;
+    const String ethModeRaw = getParamValue(request, "eth_mode");
+    if (!ethModeRaw.isEmpty() && !parseDhcpModeText(ethModeRaw, newEthernetUseDhcp)) {
+      message = "Modo Ethernet invalido";
+      return false;
+    }
+    bool newEthernetUseCustomMac = runtimeConfig.ethernet.useCustomMac;
+    const String ethCustomMacRaw = getParamValue(request, "eth_custom_mac_enabled");
+    if (!ethCustomMacRaw.isEmpty() && !parseBooleanText(ethCustomMacRaw, newEthernetUseCustomMac)) {
+      message = "Valor invalido para MAC Ethernet";
+      return false;
+    }
+
+    String newWifiSsid = getParamValue(request, "ssid");
+    if (newWifiSsid.isEmpty() && !request->hasParam("ssid", true) && !request->hasParam("ssid")) {
+      newWifiSsid = runtimeConfig.wifiSsid;
+    }
+    String newWifiPassword = getParamValue(request, "password");
+    if (newWifiPassword.isEmpty() && !request->hasParam("password", true) && !request->hasParam("password")) {
+      newWifiPassword = runtimeConfig.wifiPassword;
+    }
+
+    NetworkInterfaceConfig newWifiConfig = runtimeConfig.wifiSta;
+    NetworkInterfaceConfig newEthernetConfig = runtimeConfig.ethernet;
+    String error;
+    if (!validateDeviceId(newDeviceId, error)) {
+      message = error;
+      return false;
+    }
+    if (!applyNetworkInterfaceConfig(newWifiConfig,
+                                     newStaEnabled,
+                                     newStaUseDhcp,
+                                     getParamValue(request, "sta_ip").isEmpty() ? ipAddressToString(runtimeConfig.wifiSta.ipAddress) : getParamValue(request, "sta_ip"),
+                                     getParamValue(request, "sta_mask").isEmpty() ? ipAddressToString(runtimeConfig.wifiSta.subnetMask) : getParamValue(request, "sta_mask"),
+                                     getParamValue(request, "sta_gw").isEmpty() ? ipAddressToString(runtimeConfig.wifiSta.gateway) : getParamValue(request, "sta_gw"),
+                                     getParamValue(request, "sta_dns1").isEmpty() ? ipAddressToString(runtimeConfig.wifiSta.dns1) : getParamValue(request, "sta_dns1"),
+                                     getParamValue(request, "sta_dns2").isEmpty() ? ipAddressToString(runtimeConfig.wifiSta.dns2) : getParamValue(request, "sta_dns2"),
+                                     error)) {
+      message = error;
+      return false;
+    }
+    if (!applyNetworkInterfaceConfig(newEthernetConfig,
+                                     newEthernetEnabled,
+                                     newEthernetUseDhcp,
+                                     getParamValue(request, "eth_ip").isEmpty() ? ipAddressToString(runtimeConfig.ethernet.ipAddress) : getParamValue(request, "eth_ip"),
+                                     getParamValue(request, "eth_mask").isEmpty() ? ipAddressToString(runtimeConfig.ethernet.subnetMask) : getParamValue(request, "eth_mask"),
+                                     getParamValue(request, "eth_gw").isEmpty() ? ipAddressToString(runtimeConfig.ethernet.gateway) : getParamValue(request, "eth_gw"),
+                                     getParamValue(request, "eth_dns1").isEmpty() ? ipAddressToString(runtimeConfig.ethernet.dns1) : getParamValue(request, "eth_dns1"),
+                                     getParamValue(request, "eth_dns2").isEmpty() ? ipAddressToString(runtimeConfig.ethernet.dns2) : getParamValue(request, "eth_dns2"),
+                                     error)) {
+      message = error;
+      return false;
+    }
+    String ethernetMac = getParamValue(request, "eth_mac");
+    if (ethernetMac.isEmpty() && !request->hasParam("eth_mac", true) && !request->hasParam("eth_mac")) {
+      ethernetMac = runtimeConfig.ethernet.macAddress;
+    }
+    if (newEthernetUseCustomMac) {
+      uint8_t macBytes[6];
+      String normalizedMac;
+      if (!parseMacAddress(ethernetMac, macBytes, normalizedMac, error)) {
+        message = error;
+        return false;
+      }
+      newEthernetConfig.useCustomMac = true;
+      newEthernetConfig.macAddress = normalizedMac;
+    } else {
+      newEthernetConfig.useCustomMac = false;
+      ethernetMac.trim();
+      ethernetMac.toUpperCase();
+      newEthernetConfig.macAddress = ethernetMac;
+    }
+
+    runtimeConfig.deviceId = newDeviceId;
+    runtimeConfig.wifiSta = newWifiConfig;
+    runtimeConfig.wifiSsid = newWifiSsid;
+    runtimeConfig.wifiPassword = newWifiPassword;
+    runtimeConfig.ethernet = newEthernetConfig;
+    saveNetworkConfig();
+
+    if (runtimeConfig.mqtt.clientId.isEmpty() || runtimeConfig.mqtt.clientId == previousDeviceId) {
+      runtimeConfig.mqtt.clientId = runtimeConfig.deviceId;
+      saveMqttConfig();
+    }
+
+    publishMqttCurrentConfig(true);
+    message = "Configuracion de red guardada. Reinicio programado";
+    return true;
+  };
+
+  auto applyMqttConfigRequest = [this](AsyncWebServerRequest* request, String& message) -> bool {
+    bool mqttEnabled = runtimeConfig.mqtt.enabled;
+    const String mqttEnabledRaw = getParamValue(request, "mqtt_enabled");
+    if (!mqttEnabledRaw.isEmpty() && !parseBooleanText(mqttEnabledRaw, mqttEnabled)) {
+      message = "Valor invalido para habilitar MQTT";
+      return false;
+    }
+
+    String brokerHost = getParamValue(request, "mqtt_host");
+    if (brokerHost.isEmpty() && !request->hasParam("mqtt_host", true) && !request->hasParam("mqtt_host")) {
+      brokerHost = runtimeConfig.mqtt.brokerHost;
+    }
+
+    uint16_t brokerPort = runtimeConfig.mqtt.brokerPort;
+    const String brokerPortRaw = getParamValue(request, "mqtt_port");
+    if (!brokerPortRaw.isEmpty() && !parseUint16Text(brokerPortRaw, 1, 65535, brokerPort)) {
+      message = "Puerto MQTT invalido";
+      return false;
+    }
+
+    String clientId = getParamValue(request, "mqtt_client_id");
+    if (clientId.isEmpty() && !request->hasParam("mqtt_client_id", true) && !request->hasParam("mqtt_client_id")) {
+      clientId = runtimeConfig.mqtt.clientId;
+    }
+
+    String topicRoot = getParamValue(request, "mqtt_topic_root");
+    if (topicRoot.isEmpty() && !request->hasParam("mqtt_topic_root", true) && !request->hasParam("mqtt_topic_root")) {
+      topicRoot = runtimeConfig.mqtt.topicRoot;
+    }
+
+    uint32_t publishIntervalMs = runtimeConfig.mqtt.publishIntervalMs;
+    const String publishIntervalRaw = getParamValue(request, "mqtt_publish_interval_ms");
+    if (!publishIntervalRaw.isEmpty() &&
+        !parseUint32Text(publishIntervalRaw, kMinMqttPublishIntervalMs, kMaxMqttPublishIntervalMs, publishIntervalMs)) {
+      message = "Intervalo MQTT invalido";
+      return false;
+    }
+
+    String error;
+    if (!validateMqttConfigValues(mqttEnabled, brokerHost, brokerPort, clientId, topicRoot, publishIntervalMs, error)) {
+      message = error;
+      return false;
+    }
+
+    runtimeConfig.mqtt.enabled = mqttEnabled;
+    runtimeConfig.mqtt.brokerHost = brokerHost;
+    runtimeConfig.mqtt.brokerPort = brokerPort;
+    runtimeConfig.mqtt.clientId = clientId;
+    runtimeConfig.mqtt.topicRoot = topicRoot;
+    runtimeConfig.mqtt.publishIntervalMs = publishIntervalMs;
+    saveMqttConfig();
+    message = "Configuracion MQTT guardada. Reinicio programado";
+    return true;
+  };
+
+  auto applyOtaConfigRequest = [this](AsyncWebServerRequest* request, String& message) -> bool {
+    bool otaEnabled = runtimeConfig.otaEnabled;
+    const String enabledRaw = getParamValue(request, "enabled");
+    if (!enabledRaw.isEmpty() && !parseBooleanText(enabledRaw, otaEnabled)) {
+      message = "Valor invalido para OTA";
+      return false;
+    }
+
+    String manifestUrl = getParamValue(request, "manifest_url");
+    if (manifestUrl.isEmpty() && !request->hasParam("manifest_url", true) && !request->hasParam("manifest_url")) {
+      manifestUrl = runtimeConfig.otaManifestUrl;
+    }
+
+    String error;
+    if (!validateOtaConfigValues(otaEnabled, manifestUrl, error)) {
+      message = error;
+      return false;
+    }
+
+    runtimeConfig.otaEnabled = otaEnabled;
+    runtimeConfig.otaManifestUrl = manifestUrl;
+    saveOtaConfig();
+    otaStatus.lastMessage = runtimeConfig.otaEnabled ? "OTA configurada" : "OTA deshabilitada";
+    saveOtaStatus();
+    publishMqttCurrentConfig(true);
+    publishMqttStatus(true);
+    message = "OTA guardada";
+    return true;
+  };
+
+  server.on("/config/save", HTTP_POST, [this, applyValveConfigRequest](AsyncWebServerRequest* request) {
+    if (!ensurePermission(request, Permission::ManageConfig)) {
+      return;
+    }
+
+    String message;
+    if (!applyValveConfigRequest(request, message)) {
+      request->send(400, "text/plain", message);
+      return;
+    }
+    request->send(200, "text/plain", message);
   });
 
   server.on("/wifi/save", HTTP_POST, [this](AsyncWebServerRequest* request) {
@@ -657,7 +1198,8 @@ void AppRuntime::setupWebServer() {
 
     runtimeConfig.wifiSsid = request->hasParam("ssid", true) ? request->getParam("ssid", true)->value() : "";
     runtimeConfig.wifiPassword = request->hasParam("password", true) ? request->getParam("password", true)->value() : "";
-    saveWifiConfig();
+    runtimeConfig.wifiSta.enabled = !runtimeConfig.wifiSsid.isEmpty();
+    saveNetworkConfig();
 
     if (runtimeConfig.wifiSsid.isEmpty()) {
       WiFi.disconnect(false, false);
@@ -667,6 +1209,79 @@ void AppRuntime::setupWebServer() {
 
     beginWifiClientConnection(true);
     request->send(200, "text/plain", "WiFi guardado. Intentando conectar.");
+  });
+
+  server.on("/network/save", HTTP_POST, [this, applyNetworkConfigRequest](AsyncWebServerRequest* request) {
+    if (!ensurePermission(request, Permission::ManageConfig)) {
+      return;
+    }
+
+    String message;
+    if (!applyNetworkConfigRequest(request, message)) {
+      request->send(400, "text/plain", message);
+      return;
+    }
+
+    pendingRestartAtMs = millis() + kPendingRestartDelayMs;
+    request->send(202, "text/plain", message);
+  });
+
+  server.on("/mqtt/save", HTTP_POST, [this, applyMqttConfigRequest](AsyncWebServerRequest* request) {
+    if (!ensurePermission(request, Permission::ManageConfig)) {
+      return;
+    }
+
+    String message;
+    if (!applyMqttConfigRequest(request, message)) {
+      request->send(400, "text/plain", message);
+      return;
+    }
+
+    pendingRestartAtMs = millis() + kPendingRestartDelayMs;
+    request->send(202, "text/plain", message);
+  });
+
+  server.on("/api/v1/config/valves", HTTP_POST, [this, applyValveConfigRequest](AsyncWebServerRequest* request) {
+    if (!ensurePermission(request, Permission::ManageConfig)) {
+      return;
+    }
+
+    String message;
+    if (!applyValveConfigRequest(request, message)) {
+      request->send(400, "application/json", "{\"ok\":false,\"message\":\"" + jsonEscape(message) + "\"}");
+      return;
+    }
+    request->send(200, "application/json", "{\"ok\":true,\"message\":\"" + jsonEscape(message) + "\"}");
+  });
+
+  server.on("/api/v1/config/network", HTTP_POST, [this, applyNetworkConfigRequest](AsyncWebServerRequest* request) {
+    if (!ensurePermission(request, Permission::ManageConfig)) {
+      return;
+    }
+
+    String message;
+    if (!applyNetworkConfigRequest(request, message)) {
+      request->send(400, "application/json", "{\"ok\":false,\"message\":\"" + jsonEscape(message) + "\"}");
+      return;
+    }
+
+    pendingRestartAtMs = millis() + kPendingRestartDelayMs;
+    request->send(202, "application/json", "{\"ok\":true,\"message\":\"" + jsonEscape(message) + "\"}");
+  });
+
+  server.on("/api/v1/config/mqtt", HTTP_POST, [this, applyMqttConfigRequest](AsyncWebServerRequest* request) {
+    if (!ensurePermission(request, Permission::ManageConfig)) {
+      return;
+    }
+
+    String message;
+    if (!applyMqttConfigRequest(request, message)) {
+      request->send(400, "application/json", "{\"ok\":false,\"message\":\"" + jsonEscape(message) + "\"}");
+      return;
+    }
+
+    pendingRestartAtMs = millis() + kPendingRestartDelayMs;
+    request->send(202, "application/json", "{\"ok\":true,\"message\":\"" + jsonEscape(message) + "\"}");
   });
 
   server.on("/security/operator/save", HTTP_POST, [this](AsyncWebServerRequest* request) {
@@ -798,24 +1413,41 @@ void AppRuntime::setupWebServer() {
     request->send(200, "text/plain", "Hora actualizada");
   });
 
-  server.on("/ota/save", HTTP_POST, [this](AsyncWebServerRequest* request) {
+  server.on("/api/v1/time", HTTP_POST, [this](AsyncWebServerRequest* request) {
+    if (!ensurePermission(request, Permission::ManageConfig)) {
+      return;
+    }
+
+    String epochRaw = "";
+    if (request->hasParam("epoch", true)) {
+      epochRaw = request->getParam("epoch", true)->value();
+    } else if (request->hasParam("epoch")) {
+      epochRaw = request->getParam("epoch")->value();
+    }
+
+    if (!isUnsignedNumber(epochRaw)) {
+      request->send(400, "application/json", "{\"ok\":false,\"message\":\"Epoch invalido\"}");
+      return;
+    }
+
+    const uint32_t utcEpoch = strtoul(epochRaw.c_str(), nullptr, 10);
+    const int32_t localEpoch = static_cast<int32_t>(utcEpoch) + static_cast<int32_t>(kGmtOffsetSec);
+    rtc.adjust(DateTime(static_cast<uint32_t>(localEpoch)));
+    lastNtpSyncAtMs = millis();
+    request->send(200, "application/json", "{\"ok\":true,\"message\":\"Hora actualizada\"}");
+  });
+
+  server.on("/ota/save", HTTP_POST, [this, applyOtaConfigRequest](AsyncWebServerRequest* request) {
     if (!ensurePermission(request, Permission::ManageOta)) {
       return;
     }
 
-    runtimeConfig.otaEnabled = request->hasParam("enabled", true) && request->getParam("enabled", true)->value() == "1";
-    runtimeConfig.otaManifestUrl = request->hasParam("manifest_url", true) ? request->getParam("manifest_url", true)->value() : "";
-    runtimeConfig.otaManifestUrl.trim();
-
-    if (runtimeConfig.otaEnabled && runtimeConfig.otaManifestUrl.isEmpty()) {
-      request->send(400, "text/plain", "Falta URL del manifest OTA");
+    String message;
+    if (!applyOtaConfigRequest(request, message)) {
+      request->send(400, "text/plain", message);
       return;
     }
-
-    saveOtaConfig();
-    otaStatus.lastMessage = runtimeConfig.otaEnabled ? "OTA configurada" : "OTA deshabilitada";
-    saveOtaStatus();
-    request->send(200, "text/plain", "OTA guardada");
+    request->send(200, "text/plain", message);
   });
 
   server.on("/ota/check", HTTP_POST, [this](AsyncWebServerRequest* request) {
@@ -827,31 +1459,42 @@ void AppRuntime::setupWebServer() {
     request->send(202, "text/plain", "Chequeo OTA solicitado");
   });
 
+  server.on("/api/v1/ota/check", HTTP_POST, [this](AsyncWebServerRequest* request) {
+    if (!ensurePermission(request, Permission::ManageOta)) {
+      return;
+    }
+
+    otaManualCheckRequested = true;
+    request->send(202, "application/json", "{\"ok\":true,\"message\":\"Chequeo OTA solicitado\"}");
+  });
+
+  server.on("/api/v1/config/ota", HTTP_POST, [this, applyOtaConfigRequest](AsyncWebServerRequest* request) {
+    if (!ensurePermission(request, Permission::ManageOta)) {
+      return;
+    }
+
+    String message;
+    if (!applyOtaConfigRequest(request, message)) {
+      request->send(400, "application/json", "{\"ok\":false,\"message\":\"" + jsonEscape(message) + "\"}");
+      return;
+    }
+    request->send(200, "application/json", "{\"ok\":true,\"message\":\"" + jsonEscape(message) + "\"}");
+  });
+
+  server.on("/api/v1/reboot", HTTP_POST, [this](AsyncWebServerRequest* request) {
+    if (!ensurePermission(request, Permission::ManageConfig)) {
+      return;
+    }
+
+    pendingRestartAtMs = millis() + 750UL;
+    request->send(202, "application/json", "{\"ok\":true,\"message\":\"Reinicio programado\"}");
+  });
+
   server.on("/list", HTTP_GET, [this](AsyncWebServerRequest* request) {
     if (!ensurePermission(request, Permission::ViewData)) {
       return;
     }
-    String output = "[";
-    File root = SD.open("/");
-    if (!root) {
-      request->send(200, "application/json", "[]");
-      return;
-    }
-
-    File entry = root.openNextFile();
-    while (entry) {
-      if (!entry.isDirectory() && String(entry.name()).endsWith(".csv")) {
-        if (output != "[") {
-          output += ",";
-        }
-        output += "{\"name\":\"" + jsonEscape(String(entry.name())) + "\",\"size\":\"" + String(entry.size() / 1024.0, 1) + "KB\"}";
-      }
-      entry.close();
-      entry = root.openNextFile();
-    }
-    root.close();
-    output += "]";
-    request->send(200, "application/json", output);
+    request->send(200, "application/json", buildStorageFileListJson());
   });
 
   server.on("/get", HTTP_GET, [this](AsyncWebServerRequest* request) {
@@ -869,14 +1512,14 @@ void AppRuntime::setupWebServer() {
       return;
     }
 
-    request->send(SD, fileName, "text/csv");
+    sendCsvFileResponse(request, fileName, false);
   });
 
   server.on("/download", HTTP_GET, [this](AsyncWebServerRequest* request) {
     if (!ensurePermission(request, Permission::ViewData)) {
       return;
     }
-    request->send(SD, getFileName(), "text/csv");
+    sendCsvFileResponse(request, getFileName(), true);
   });
 
   server.on("/delete", HTTP_POST, [this](AsyncWebServerRequest* request) {
@@ -895,13 +1538,41 @@ void AppRuntime::setupWebServer() {
       return;
     }
 
-    if (!SD.exists(fileName)) {
+    if (!storageManager.exists(fileName)) {
       request->send(404, "text/plain", "Archivo inexistente");
       return;
     }
 
-    SD.remove(fileName);
+    if (!storageManager.remove(fileName)) {
+      request->send(500, "text/plain", "No se pudo eliminar el archivo");
+      return;
+    }
+
     request->send(200, "text/plain", "Archivo eliminado");
+  });
+
+  server.on("/api/v1/files", HTTP_DELETE, [this](AsyncWebServerRequest* request) {
+    if (!ensurePermission(request, Permission::DeleteFiles)) {
+      return;
+    }
+
+    const String fileName = sanitizeCsvFileName(getParamValue(request, "file"));
+    if (fileName.isEmpty()) {
+      request->send(400, "application/json", "{\"ok\":false,\"message\":\"Archivo invalido\"}");
+      return;
+    }
+
+    if (!storageManager.exists(fileName)) {
+      request->send(404, "application/json", "{\"ok\":false,\"message\":\"Archivo inexistente\"}");
+      return;
+    }
+
+    if (!storageManager.remove(fileName)) {
+      request->send(500, "application/json", "{\"ok\":false,\"message\":\"No se pudo eliminar el archivo\"}");
+      return;
+    }
+
+    request->send(200, "application/json", "{\"ok\":true,\"message\":\"Archivo eliminado\"}");
   });
 
   server.begin();

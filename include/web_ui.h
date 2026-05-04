@@ -183,8 +183,10 @@ const char index_html[] PROGMEM = R"rawliteral(
       <div class="card">
         <div class="section-title">Red y firmware</div>
         <div class="status-grid">
+          <div class="status-pill"><small>Uplink activo</small><b id="uplink-status">-</b></div>
           <div class="status-pill"><small>WiFi STA</small><b id="wifi-status">-</b></div>
-          <div class="status-pill"><small>SSID / IP</small><b id="wifi-ip">-</b></div>
+          <div class="status-pill"><small>Ethernet</small><b id="ethernet-status">-</b></div>
+          <div class="status-pill"><small>MQTT / SD</small><b id="mqtt-status">-</b></div>
           <div class="status-pill"><small>Access Point</small><b id="ap-ip">-</b></div>
           <div class="status-pill"><small>Firmware</small><b id="firmware-version">-</b></div>
         </div>
@@ -236,12 +238,53 @@ const char index_html[] PROGMEM = R"rawliteral(
             <div class="message" id="msg-time"></div>
           </div>
           <div class="card">
-            <div class="section-title">WiFi del sitio</div>
+            <div class="section-title">Identidad y WiFi STA</div>
+            <label for="device-id">Device ID</label><input id="device-id" type="text" autocomplete="off">
+            <div class="hint">El device ID identifica el equipo en MQTT, Ethernet y diagnostico. AP fijo: <b id="ap-ssid-label">-</b></div>
+            <label class="inline"><input id="sta-enabled" type="checkbox">Habilitar WiFi STA</label>
             <label for="wifi-ssid">SSID</label><input id="wifi-ssid" type="text" autocomplete="off">
             <label for="wifi-password">Clave WiFi</label><input id="wifi-password" type="password" autocomplete="new-password">
-            <div class="hint">Si dejas el SSID vacio, el equipo queda solo en Access Point.</div>
-            <button class="btn" onclick="saveWifiConfig()">Guardar WiFi</button>
-            <div class="message" id="msg-wifi"></div>
+            <label for="sta-mode">Modo WiFi STA</label>
+            <select id="sta-mode">
+              <option value="dhcp">DHCP</option>
+              <option value="static">IP fija</option>
+            </select>
+            <label for="sta-ip">IP</label><input id="sta-ip" type="text" placeholder="192.168.1.80">
+            <label for="sta-mask">Mascara</label><input id="sta-mask" type="text" placeholder="255.255.255.0">
+            <label for="sta-gateway">Gateway</label><input id="sta-gateway" type="text" placeholder="192.168.1.1">
+            <label for="sta-dns1">DNS 1</label><input id="sta-dns1" type="text" placeholder="192.168.1.1">
+            <label for="sta-dns2">DNS 2</label><input id="sta-dns2" type="text" placeholder="8.8.8.8">
+            <button class="btn" onclick="saveNetworkConfig()">Guardar red</button>
+            <div class="message" id="msg-network"></div>
+          </div>
+          <div class="card">
+            <div class="section-title">Ethernet ENC28J60</div>
+            <label class="inline"><input id="eth-enabled" type="checkbox">Habilitar Ethernet</label>
+            <label for="eth-mode">Modo Ethernet</label>
+            <select id="eth-mode">
+              <option value="dhcp">DHCP</option>
+              <option value="static">IP fija</option>
+            </select>
+            <label class="inline"><input id="eth-custom-mac" type="checkbox">Usar MAC personalizada</label>
+            <label for="eth-mac">MAC Ethernet</label><input id="eth-mac" type="text" placeholder="02:12:34:56:78:9A">
+            <label for="eth-ip">IP</label><input id="eth-ip" type="text" placeholder="192.168.1.50">
+            <label for="eth-mask">Mascara</label><input id="eth-mask" type="text" placeholder="255.255.255.0">
+            <label for="eth-gateway">Gateway</label><input id="eth-gateway" type="text" placeholder="192.168.1.1">
+            <label for="eth-dns1">DNS 1</label><input id="eth-dns1" type="text" placeholder="192.168.1.1">
+            <label for="eth-dns2">DNS 2</label><input id="eth-dns2" type="text" placeholder="8.8.8.8">
+            <div class="hint">El equipo prioriza Ethernet para MQTT, OTA y NTP cuando tiene enlace e IP.</div>
+            <div class="message" id="msg-ethernet">SPI compartido con SD. Pines reservados: SCK18 / MISO19 / MOSI23 / CS17 / INT34 / RST16.</div>
+          </div>
+          <div class="card">
+            <div class="section-title">MQTT y Node-RED</div>
+            <label class="inline"><input id="mqtt-enabled" type="checkbox">Habilitar MQTT</label>
+            <label for="mqtt-host">Broker MQTT</label><input id="mqtt-host" type="text" placeholder="192.168.1.10">
+            <label for="mqtt-port">Puerto MQTT</label><input id="mqtt-port" type="number" min="1" max="65535">
+            <label for="mqtt-client-id">Client ID</label><input id="mqtt-client-id" type="text">
+            <label for="mqtt-topic-root">Topic root</label><input id="mqtt-topic-root" type="text" placeholder="nariz">
+            <label for="mqtt-interval">Intervalo de telemetria (ms)</label><input id="mqtt-interval" type="number" min="250" max="3600000">
+            <button class="btn" onclick="saveMqttConfig()">Guardar MQTT</button>
+            <div class="message" id="msg-mqtt"></div>
           </div>
           <div class="card">
             <div class="section-title">OTA remota</div>
@@ -429,11 +472,13 @@ const char index_html[] PROGMEM = R"rawliteral(
         document.getElementById("detail-label").innerText = data.detailValue || "-";
         document.getElementById("cycle-title").innerText = data.cycleTitle || "Tiempo restante";
         document.getElementById("cycle-label").innerText = data.cycleValue || formatSeconds(Math.floor((data.remainingMs || 0) / 1000));
-        document.getElementById("wifi-status").innerText = data.wifiStatus;
-        document.getElementById("wifi-ip").innerText = data.wifiSSID + " / " + data.localIP;
+        document.getElementById("uplink-status").innerText = (data.activeUplink || "-").toUpperCase();
+        document.getElementById("wifi-status").innerText = data.wifiStatus + " / " + data.wifiSSID + " / " + data.localIP;
+        document.getElementById("ethernet-status").innerText = data.ethernetStatus + " / " + data.ethernetIP;
+        document.getElementById("mqtt-status").innerText = (data.mqttConnected ? "MQTT OK" : "MQTT OFF") + " / SD " + (data.sdAlarm || "-");
         document.getElementById("ap-ip").innerText = data.apIP;
         document.getElementById("firmware-version").innerText = data.firmwareVersion;
-        document.getElementById("ota-summary").innerText = "OTA: " + data.otaMessage + "\nUltimo chequeo: " + data.otaLastCheck + "\nVersion disponible: " + data.otaAvailableVersion + "\nBuild: " + data.buildStamp + "\nReset: " + data.resetReason;
+        document.getElementById("ota-summary").innerText = "OTA: " + data.otaMessage + "\nUltimo chequeo: " + data.otaLastCheck + "\nVersion disponible: " + data.otaAvailableVersion + "\nUplink: " + (data.activeUplink || "-") + "\nBuild: " + data.buildStamp + "\nReset: " + data.resetReason;
         const pill = document.getElementById("pill-state");
         pill.className = "status-pill";
         if (data.state === "MUESTRA" || data.state === "CONTINUO") pill.classList.add("state-sample");
@@ -527,7 +572,33 @@ const char index_html[] PROGMEM = R"rawliteral(
         document.getElementById("cfg-v3").value = data.v3;
         document.getElementById("cfg-v4").value = data.v4;
         document.getElementById("cfg-purge").value = data.purge;
+        document.getElementById("device-id").value = data.deviceId || "";
+        document.getElementById("ap-ssid-label").innerText = data.accessPointSSID || "-";
+        document.getElementById("sta-enabled").checked = !!data.wifiSTAEnabled;
         document.getElementById("wifi-ssid").value = data.wifiSSID || "";
+        document.getElementById("wifi-password").value = "";
+        document.getElementById("sta-mode").value = data.wifiSTAMode || "dhcp";
+        document.getElementById("sta-ip").value = data.wifiSTAIP || "";
+        document.getElementById("sta-mask").value = data.wifiSTAMask || "";
+        document.getElementById("sta-gateway").value = data.wifiSTAGateway || "";
+        document.getElementById("sta-dns1").value = data.wifiSTADns1 || "";
+        document.getElementById("sta-dns2").value = data.wifiSTADns2 || "";
+        document.getElementById("eth-enabled").checked = !!data.ethernetEnabled;
+        document.getElementById("eth-mode").value = data.ethernetMode || "dhcp";
+        document.getElementById("eth-custom-mac").checked = !!data.ethernetUseCustomMac;
+        document.getElementById("eth-mac").value = data.ethernetMacAddress || "";
+        document.getElementById("eth-ip").value = data.ethernetIP || "";
+        document.getElementById("eth-mask").value = data.ethernetMask || "";
+        document.getElementById("eth-gateway").value = data.ethernetGateway || "";
+        document.getElementById("eth-dns1").value = data.ethernetDns1 || "";
+        document.getElementById("eth-dns2").value = data.ethernetDns2 || "";
+        setMessage("msg-ethernet", "SPI compartido con SD. Pines reservados: SCK18 / MISO19 / MOSI23 / CS17 / INT34 / RST16.\nMAC actual: " + (data.ethernetCurrentMac || "pendiente") + "\nMAC personalizada: " + (data.ethernetUseCustomMac ? (data.ethernetMacAddress || "-") : "deshabilitada"));
+        document.getElementById("mqtt-enabled").checked = !!data.mqttEnabled;
+        document.getElementById("mqtt-host").value = data.mqttBrokerHost || "";
+        document.getElementById("mqtt-port").value = data.mqttBrokerPort || 1883;
+        document.getElementById("mqtt-client-id").value = data.mqttClientId || "";
+        document.getElementById("mqtt-topic-root").value = data.mqttTopicRoot || "";
+        document.getElementById("mqtt-interval").value = data.mqttPublishIntervalMs || 1000;
         document.getElementById("operator-user").value = data.operatorUser || "";
         document.getElementById("operator-password").value = "";
         viewerUsers[0] = data.viewer1User || "";
@@ -573,14 +644,45 @@ const char index_html[] PROGMEM = R"rawliteral(
       } catch (error) { setMessage("msg-sampling", error.message); }
     }
 
-    async function saveWifiConfig() {
+    async function saveNetworkConfig() {
       const params = new URLSearchParams();
+      params.set("device_id", document.getElementById("device-id").value.trim());
+      params.set("sta_enabled", document.getElementById("sta-enabled").checked ? "1" : "0");
       params.set("ssid", document.getElementById("wifi-ssid").value);
       params.set("password", document.getElementById("wifi-password").value);
+      params.set("sta_mode", document.getElementById("sta-mode").value);
+      params.set("sta_ip", document.getElementById("sta-ip").value.trim());
+      params.set("sta_mask", document.getElementById("sta-mask").value.trim());
+      params.set("sta_gw", document.getElementById("sta-gateway").value.trim());
+      params.set("sta_dns1", document.getElementById("sta-dns1").value.trim());
+      params.set("sta_dns2", document.getElementById("sta-dns2").value.trim());
+      params.set("eth_enabled", document.getElementById("eth-enabled").checked ? "1" : "0");
+      params.set("eth_mode", document.getElementById("eth-mode").value);
+      params.set("eth_custom_mac_enabled", document.getElementById("eth-custom-mac").checked ? "1" : "0");
+      params.set("eth_mac", document.getElementById("eth-mac").value.trim());
+      params.set("eth_ip", document.getElementById("eth-ip").value.trim());
+      params.set("eth_mask", document.getElementById("eth-mask").value.trim());
+      params.set("eth_gw", document.getElementById("eth-gateway").value.trim());
+      params.set("eth_dns1", document.getElementById("eth-dns1").value.trim());
+      params.set("eth_dns2", document.getElementById("eth-dns2").value.trim());
       try {
-        const response = await authenticatedFetch("/wifi/save", { method: "POST", body: params });
-        setMessage("msg-wifi", await response.text());
-      } catch (error) { setMessage("msg-wifi", error.message); }
+        const response = await authenticatedFetch("/network/save", { method: "POST", body: params });
+        setMessage("msg-network", await response.text());
+      } catch (error) { setMessage("msg-network", error.message); }
+    }
+
+    async function saveMqttConfig() {
+      const params = new URLSearchParams();
+      params.set("mqtt_enabled", document.getElementById("mqtt-enabled").checked ? "1" : "0");
+      params.set("mqtt_host", document.getElementById("mqtt-host").value.trim());
+      params.set("mqtt_port", document.getElementById("mqtt-port").value.trim());
+      params.set("mqtt_client_id", document.getElementById("mqtt-client-id").value.trim());
+      params.set("mqtt_topic_root", document.getElementById("mqtt-topic-root").value.trim());
+      params.set("mqtt_publish_interval_ms", document.getElementById("mqtt-interval").value.trim());
+      try {
+        const response = await authenticatedFetch("/mqtt/save", { method: "POST", body: params });
+        setMessage("msg-mqtt", await response.text());
+      } catch (error) { setMessage("msg-mqtt", error.message); }
     }
 
     async function saveOperatorAccount() {
