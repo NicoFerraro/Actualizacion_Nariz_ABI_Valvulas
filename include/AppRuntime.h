@@ -88,6 +88,7 @@ class AppRuntime {
   AsyncMqttClient mqttClient;
   Preferences preferences;
   StorageManager storageManager;
+  SPIClass spiBus{VSPI};
 
   RuntimeConfig runtimeConfig{};
   OtaStatus otaStatus{"OTA deshabilitada", "Nunca", "-", false};
@@ -106,6 +107,8 @@ class AppRuntime {
   unsigned long lastMqttAttemptAtMs = 0;
   unsigned long lastTelemetryPublishAtMs = 0;
   unsigned long lastStatusPublishAtMs = 0;
+  unsigned long lastStorageRemountAttemptAtMs = 0;
+  unsigned long ethernetInitNotBeforeAtMs = 0;
   unsigned long pendingRestartAtMs = 0;
   wifi_event_id_t networkEventHandlerId = 0;
 
@@ -131,6 +134,7 @@ class AppRuntime {
   bool storageMounted = false;
   bool storageWriteOk = false;
   bool mqttConnected = false;
+  bool ethernetInitAttempted = false;
   bool ethernetStarted = false;
   bool ethernetLinkUp = false;
   bool ethernetHasIp = false;
@@ -159,6 +163,8 @@ class AppRuntime {
   void startAccessPoint();
   void beginWifiClientConnection(bool forceReconnect);
   void manageWifiConnection();
+  void manageEthernetInitialization();
+  void pollEthernetStatus();
   void handleNetworkEvent(arduino_event_id_t event, arduino_event_info_t info);
   void applyPreferredDefaultRoute();
   void manageMqttConnection();
@@ -226,6 +232,7 @@ class AppRuntime {
                                 String& error);
   bool validateOtaConfigValues(bool enabled, String& manifestUrl, String& error);
   bool parseMacAddress(const String& rawValue, uint8_t macBytes[6], String& normalized, String& error);
+  bool probeEnc28j60Module(uint8_t& revision, String& detail);
 
   String buildAuthJson(AccessRole role);
   String buildDataJson();
@@ -267,6 +274,7 @@ class AppRuntime {
   String ipAddressToString(const IPAddress& address);
   String getCsvDownloadName(const String& fileName);
   String mapStorageAlarmToEventCode(const String& storageAlarmCode);
+  bool remountStorageIfNeeded(const char* reason);
   bool sendCsvFileResponse(AsyncWebServerRequest* request, const String& fileName, bool download);
   void logDebugMessage(const char* tag, const String& message);
   void logMeasurements(const char* context);

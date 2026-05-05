@@ -464,10 +464,16 @@ String AppRuntime::getCsvDownloadName(const String& fileName) {
 }
 
 String AppRuntime::buildStorageFileListJson() {
+  remountStorageIfNeeded("buildStorageFileListJson");
   return storageManager.buildCsvListJson();
 }
 
 bool AppRuntime::sendCsvFileResponse(AsyncWebServerRequest* request, const String& fileName, bool download) {
+  if (!remountStorageIfNeeded("sendCsvFileResponse")) {
+    request->send(500, "text/plain", "La SD no esta montada");
+    return false;
+  }
+
   auto file = storageManager.openRead(fileName);
   if (!file) {
     request->send(404, "text/plain", "Archivo inexistente");

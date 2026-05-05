@@ -20,9 +20,37 @@ def apply_replacements(path, replacements):
         if old in text:
             text = text.replace(old, new, 1)
 
+    while '#include "esp_cpu.h"\n#include "esp_cpu.h"' in text:
+        text = text.replace('#include "esp_cpu.h"\n#include "esp_cpu.h"', '#include "esp_cpu.h"')
+
     if text != original:
         path.write_text(text, encoding="utf-8")
         print(f"[patch_enc28j60] Patched {path.relative_to(PROJECT_DIR)}")
+
+
+INIT_FAILURE_CLEANUP_OLD = """out:
+    gpio_isr_handler_remove(emac->int_gpio_num);
+    gpio_reset_pin(emac->int_gpio_num);
+    eth->on_state_changed(eth, ETH_STATE_DEINIT, NULL);
+    return ret;
+}
+"""
+
+INIT_FAILURE_CLEANUP_NEW = """out:
+    gpio_isr_handler_remove(emac->int_gpio_num);
+    gpio_reset_pin(emac->int_gpio_num);
+    if (emac->rx_task_hdl) {
+        vTaskDelete(emac->rx_task_hdl);
+        emac->rx_task_hdl = NULL;
+    }
+    if (emac->spi_hdl) {
+        spi_bus_remove_device(emac->spi_hdl);
+        emac->spi_hdl = NULL;
+    }
+    eth->on_state_changed(eth, ETH_STATE_DEINIT, NULL);
+    return ret;
+}
+"""
 
 
 apply_replacements(
@@ -93,6 +121,7 @@ apply_replacements(
             '#include "driver/gpio.h"\n#include "esp_cpu.h"',
         ),
         ("esp_cpu_get_core_id()", "xPortGetCoreID()"),
+        (INIT_FAILURE_CLEANUP_OLD, INIT_FAILURE_CLEANUP_NEW),
     ],
 )
 
@@ -120,7 +149,6 @@ err:
 }
 
 """
-
 
 def patch_phy_file(path):
     if not path.exists():

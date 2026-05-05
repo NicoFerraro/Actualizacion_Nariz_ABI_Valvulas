@@ -2,7 +2,8 @@
 
 namespace {
 
-constexpr uint32_t kStorageSpiClock = SD_SCK_MHZ(16);
+constexpr uint32_t kStorageSpiClock = 4000000UL;
+constexpr uint32_t kStorageSpiFallbackClock = 1000000UL;
 
 String escapeJson(const String& value) {
   String escaped;
@@ -19,11 +20,69 @@ String escapeJson(const String& value) {
   return escaped;
 }
 
+String describeCardType(uint8_t cardType) {
+  switch (cardType) {
+    case CARD_MMC:
+      return "MMC";
+    case CARD_SD:
+      return "SDSC";
+    case CARD_SDHC:
+      return "SDHC/SDXC";
+    case CARD_NONE:
+    default:
+      return "sin tarjeta";
+  }
 }
 
-bool StorageManager::begin(uint8_t chipSelectPin) {
-  mounted = sd.begin(SdSpiConfig(chipSelectPin, SHARED_SPI, kStorageSpiClock));
-  return mounted;
+}  // namespace
+
+bool StorageManager::begin(SPIClass& spiBus,
+                           uint8_t chipSelectPin,
+                           uint8_t sckPin,
+                           uint8_t misoPin,
+                           uint8_t mosiPin) {
+  initDiagnostic = "";
+  end();
+  spiBus.begin(sckPin, misoPin, mosiPin, chipSelectPin);
+
+  mounted = SD.begin(chipSelectPin, spiBus, kStorageSpiFallbackClock);
+  if (mounted) {
+    initDiagnostic = "Montada con SPIClass(VSPI) explicito a 1 MHz | " + describeCardType(SD.cardType()) +
+                     " | total=" + String(SD.totalBytes()) +
+                     " used=" + String(SD.usedBytes());
+    return true;
+  }
+
+  auto tryBegin = [&](uint32_t frequency, const char* label) -> bool {
+    spiBus.begin(sckPin, misoPin, mosiPin, chipSelectPin);
+    mounted = SD.begin(chipSelectPin, spiBus, frequency);
+    if (mounted) {
+      initDiagnostic = String(label) + " | " + describeCardType(SD.cardType()) +
+                       " | total=" + String(SD.totalBytes()) +
+                       " used=" + String(SD.usedBytes());
+      return true;
+    }
+
+    initDiagnostic = String(label) + " | SD.begin devolvio false | tipo=" +
+                     describeCardType(SD.cardType());
+    SD.end();
+    return false;
+  };
+
+  if (tryBegin(kStorageSpiClock, "Montada con SPIClass(VSPI) explicito a 4 MHz")) {
+    return true;
+  }
+
+  if (tryBegin(kStorageSpiFallbackClock, "Montada con SD.h a 1 MHz reintento")) {
+    return true;
+  }
+
+  return false;
+}
+
+void StorageManager::end() {
+  SD.end();
+  mounted = false;
 }
 
 bool StorageManager::isMounted() const {
@@ -31,11 +90,11 @@ bool StorageManager::isMounted() const {
 }
 
 bool StorageManager::exists(const String& path) {
-  return mounted && sd.exists(path.c_str());
+  return mounted && SD.exists(path);
 }
 
 bool StorageManager::remove(const String& path) {
-  return mounted && sd.remove(path.c_str());
+  return mounted && SD.remove(path);
 }
 
 bool StorageManager::appendLine(const String& path, const String& line, const String& headerIfNew) {
@@ -43,20 +102,19 @@ bool StorageManager::appendLine(const String& path, const String& line, const St
     return false;
   }
 
-  const bool existsAlready = sd.exists(path.c_str());
-  FsFile file;
-  if (!file.open(path.c_str(), O_WRONLY | O_CREAT | O_APPEND)) {
+  const bool existsAlready = SD.exists(path);
+  File file = SD.open(path, FILE_APPEND);
+  if (!file) {
     return false;
   }
 
   if (!existsAlready && !headerIfNew.isEmpty()) {
-    file.println(headerIfNew.c_str());
+    file.println(headerIfNew);
   }
 
-  file.print(line.c_str());
-  const bool ok = file.getWriteError() == 0;
+  const size_t written = file.print(line);
   file.close();
-  return ok;
+  return written == line.length();
 }
 
 bool StorageManager::getUsage(uint64_t& totalBytes, uint64_t& usedBytes) {
@@ -66,15 +124,9 @@ bool StorageManager::getUsage(uint64_t& totalBytes, uint64_t& usedBytes) {
     return false;
   }
 
-  const uint64_t bytesPerCluster = static_cast<uint64_t>(sd.bytesPerCluster());
-  const uint64_t clusterCount = static_cast<uint64_t>(sd.clusterCount());
-  const uint64_t freeClusters = static_cast<uint64_t>(sd.freeClusterCount());
-
-  totalBytes = bytesPerCluster * clusterCount;
-  usedBytes = totalBytes >= (bytesPerCluster * freeClusters)
-      ? totalBytes - (bytesPerCluster * freeClusters)
-      : 0;
-  return true;
+  totalBytes = SD.totalBytes();
+  usedBytes = SD.usedBytes();
+  return totalBytes > 0;
 }
 
 String StorageManager::buildCsvListJson() {
@@ -82,30 +134,31 @@ String StorageManager::buildCsvListJson() {
     return "[]";
   }
 
-  FsFile root;
-  if (!root.open("/", O_RDONLY)) {
+  File root = SD.open("/");
+  if (!root) {
     return "[]";
   }
 
   String output = "[";
   while (true) {
-    FsFile entry = root.openNextFile();
+    File entry = root.openNextFile();
     if (!entry) {
       break;
     }
 
     if (!entry.isDirectory()) {
-      char nameBuffer[96] = {0};
-      entry.getName(nameBuffer, sizeof(nameBuffer));
-      String fileName = String(nameBuffer);
+      String fileName = String(entry.name());
+      String lowerName = fileName;
+      lowerName.toLowerCase();
       if (!fileName.startsWith("/")) {
         fileName = "/" + fileName;
       }
-      if (fileName.endsWith(".csv")) {
+      if (lowerName.endsWith(".csv")) {
         if (output != "[") {
           output += ",";
         }
-        output += "{\"name\":\"" + escapeJson(fileName) + "\",\"size\":\"" + String(entry.size() / 1024.0, 1) + "KB\"}";
+        output += "{\"name\":\"" + escapeJson(fileName) + "\",\"size\":\"" +
+                  String(entry.size() / 1024.0, 1) + "KB\"}";
       }
     }
 
@@ -117,14 +170,18 @@ String StorageManager::buildCsvListJson() {
   return output;
 }
 
-std::shared_ptr<FsFile> StorageManager::openRead(const String& path) {
+std::shared_ptr<File> StorageManager::openRead(const String& path) {
   if (!mounted) {
     return nullptr;
   }
 
-  auto file = std::make_shared<FsFile>();
-  if (!file->open(path.c_str(), O_RDONLY)) {
+  auto file = std::make_shared<File>(SD.open(path, FILE_READ));
+  if (!file || !(*file)) {
     return nullptr;
   }
   return file;
+}
+
+String StorageManager::lastInitDiagnostic() const {
+  return initDiagnostic;
 }

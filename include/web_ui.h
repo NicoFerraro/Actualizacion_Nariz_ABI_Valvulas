@@ -272,7 +272,7 @@ const char index_html[] PROGMEM = R"rawliteral(
             <label for="eth-gateway">Gateway</label><input id="eth-gateway" type="text" placeholder="192.168.1.1">
             <label for="eth-dns1">DNS 1</label><input id="eth-dns1" type="text" placeholder="192.168.1.1">
             <label for="eth-dns2">DNS 2</label><input id="eth-dns2" type="text" placeholder="8.8.8.8">
-            <div class="hint">El equipo prioriza Ethernet para MQTT, OTA y NTP cuando tiene enlace e IP.</div>
+            <div class="hint">Ethernet no usa SSID ni clave: al ser por cable solo necesita enlace fisico y, segun el caso, DHCP o IP fija. El equipo prioriza Ethernet para MQTT, OTA y NTP cuando tiene enlace e IP.</div>
             <div class="message" id="msg-ethernet">SPI compartido con SD. Pines reservados: SCK18 / MISO19 / MOSI23 / CS17 / INT34 / RST16.</div>
           </div>
           <div class="card">

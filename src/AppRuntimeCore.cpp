@@ -30,10 +30,13 @@ constexpr uint32_t kSensorPollIntervalMs = 1000UL;
 constexpr uint32_t kWifiRetryIntervalMs = 30000UL;
 constexpr uint32_t kMqttRetryIntervalMs = 10000UL;
 constexpr uint32_t kMqttStatusIntervalMs = 10000UL;
+constexpr uint32_t kStorageRemountRetryMs = 5000UL;
+constexpr uint32_t kEthernetInitDelayMs = 5000UL;
 constexpr uint32_t kPendingRestartDelayMs = 750UL;
 constexpr uint32_t kOtaCheckIntervalMs = 3600000UL;
 constexpr uint32_t kNtpSyncIntervalMs = 86400000UL;
-constexpr int kEnc28j60SpiClockMhz = 10;
+constexpr int kEnc28j60SpiClockMhz = 8;
+constexpr uint32_t kEnc28j60ProbeSpiClockHz = 1000000UL;
 constexpr uint16_t kRtcFallbackYear = 2020;
 constexpr int kOverflowThreshold = 40000;
 constexpr float kStorageLowSpacePercent = 90.0f;
@@ -55,6 +58,17 @@ constexpr char kValveCycleTitle[] = "Tiempo restante";
 constexpr char kMqttOnlinePayload[] = "online";
 constexpr char kMqttOfflinePayload[] = "offline";
 
+constexpr uint8_t kEnc28j60SpiCmdReadControl = 0x00;
+constexpr uint8_t kEnc28j60SpiCmdWriteControl = 0x02;
+constexpr uint8_t kEnc28j60SpiSoftReset = 0xFF;
+constexpr uint8_t kEnc28j60RegEcon1 = 0x1F;
+constexpr uint8_t kEnc28j60RegErevid = 0x12;
+constexpr uint8_t kEnc28j60Bank3 = 0x03;
+constexpr uint8_t kEnc28j60RevB1 = 0x02;
+constexpr uint8_t kEnc28j60RevB4 = 0x04;
+constexpr uint8_t kEnc28j60RevB5 = 0x05;
+constexpr uint8_t kEnc28j60RevB7 = 0x06;
+
 uint8_t kReadCommand[] = {0xFF, 0x01, 0x86, 0x00, 0x00, 0x00, 0x00, 0x00, 0x79};
 const IPAddress kDefaultWifiStaticIp(192, 168, 1, 80);
 const IPAddress kDefaultEthernetStaticIp(192, 168, 1, 50);
@@ -65,6 +79,13 @@ const IPAddress kDefaultDns2(1, 1, 1, 1);
 
 bool hasValidIpAddress(const IPAddress& address) {
   return static_cast<uint32_t>(address) != 0;
+}
+
+bool isValidEnc28j60Revision(uint8_t revision) {
+  return revision == kEnc28j60RevB1 ||
+         revision == kEnc28j60RevB4 ||
+         revision == kEnc28j60RevB5 ||
+         revision == kEnc28j60RevB7;
 }
 
 void setDefaultRouteForEspNetif(esp_netif_t* espNetif) {
@@ -157,9 +178,9 @@ void AppRuntime::setup() {
   logPinMap();
 
   setupHardware();
+  setupStorage();
   setupSensors();
   setupRtc();
-  setupStorage();
   loadConfig();
   setupNetwork();
   setupMqtt();
@@ -169,6 +190,8 @@ void AppRuntime::setup() {
 
 void AppRuntime::loop() {
   manageWifiConnection();
+  manageEthernetInitialization();
+  pollEthernetStatus();
   updateValveStateMachine();
   pollSensorsIfNeeded();
   syncRtcFromNtpIfNeeded();
@@ -179,6 +202,13 @@ void AppRuntime::loop() {
 }
 
 void AppRuntime::setupHardware() {
+  pinMode(app_variant::kSdCsPin, OUTPUT);
+  digitalWrite(app_variant::kSdCsPin, HIGH);
+  pinMode(app_variant::kEthernetCsPin, OUTPUT);
+  digitalWrite(app_variant::kEthernetCsPin, HIGH);
+  pinMode(app_variant::kEthernetResetPin, OUTPUT);
+  digitalWrite(app_variant::kEthernetResetPin, LOW);
+
   if (app_variant::kSupportsValveControl) {
     for (size_t i = 0; i < kValveCount; ++i) {
       pinMode(kSampleValvePins[i], OUTPUT);
@@ -216,17 +246,19 @@ void AppRuntime::setupRtc() {
 }
 
 void AppRuntime::setupStorage() {
-  SPI.begin(app_variant::kEthernetSpiSckPin,
-            app_variant::kEthernetSpiMisoPin,
-            app_variant::kEthernetSpiMosiPin,
-            app_variant::kSdCsPin);
-  storageMounted = storageManager.begin(app_variant::kSdCsPin);
+  digitalWrite(app_variant::kSdCsPin, HIGH);
+  digitalWrite(app_variant::kEthernetCsPin, HIGH);
+  storageMounted = storageManager.begin(spiBus,
+                                        app_variant::kSdCsPin,
+                                        app_variant::kEthernetSpiSckPin,
+                                        app_variant::kEthernetSpiMisoPin,
+                                        app_variant::kEthernetSpiMosiPin);
   storageWriteOk = storageMounted;
   if (!storageMounted) {
     Serial.println("Fallo SD");
-    logDebugMessage("SD", "No se pudo montar la tarjeta SD");
+    logDebugMessage("SD", "No se pudo montar la tarjeta SD | " + storageManager.lastInitDiagnostic());
   } else {
-    logDebugMessage("SD", "Tarjeta SD montada correctamente");
+    logDebugMessage("SD", "Tarjeta SD montada correctamente | " + storageManager.lastInitDiagnostic());
   }
 }
 
@@ -237,12 +269,109 @@ void AppRuntime::setupNetwork() {
   startAccessPoint();
   logDebugMessage("WIFI", "Access Point levantado en " + WiFi.softAPIP().toString() +
                                " con SSID " + String(app_variant::kAccessPointSsid));
-  setupEthernet();
+  ethernetStarted = false;
+  ethernetLinkUp = false;
+  ethernetHasIp = false;
+  ethernetInitAttempted = false;
+  ethernetInitNotBeforeAtMs = millis() + kEthernetInitDelayMs;
+  if (runtimeConfig.ethernet.enabled) {
+    logDebugMessage("ETH", "Ethernet programado para inicializar en diferido tras " +
+                               String(kEthernetInitDelayMs / 1000) + " s");
+  } else {
+    logDebugMessage("ETH", "Ethernet deshabilitado en configuracion");
+  }
   if (runtimeConfig.wifiSta.enabled && !runtimeConfig.wifiSsid.isEmpty()) {
     beginWifiClientConnection(false);
   } else {
     logDebugMessage("WIFI", "STA deshabilitado o sin SSID configurado; queda solo AP");
   }
+}
+
+void AppRuntime::manageEthernetInitialization() {
+  if (!runtimeConfig.ethernet.enabled || ethernetStarted || ethernetInitAttempted) {
+    return;
+  }
+
+  if (millis() < ethernetInitNotBeforeAtMs) {
+    return;
+  }
+
+  ethernetInitAttempted = true;
+  setupEthernet();
+}
+
+bool AppRuntime::probeEnc28j60Module(uint8_t& revision, String& detail) {
+  revision = 0;
+  detail = "";
+
+  digitalWrite(app_variant::kSdCsPin, HIGH);
+  digitalWrite(app_variant::kEthernetCsPin, HIGH);
+  digitalWrite(app_variant::kEthernetResetPin, LOW);
+  delay(2);
+  digitalWrite(app_variant::kEthernetResetPin, HIGH);
+  delay(10);
+
+  const auto transferCommandByte = [](uint8_t command, uint8_t address) -> uint8_t {
+    return static_cast<uint8_t>((command << 5) | (address & 0x1F));
+  };
+
+  auto selectChip = []() {
+    delayMicroseconds(2);
+    digitalWrite(app_variant::kEthernetCsPin, LOW);
+    delayMicroseconds(2);
+  };
+
+  auto deselectChip = []() {
+    delayMicroseconds(2);
+    digitalWrite(app_variant::kEthernetCsPin, HIGH);
+    delayMicroseconds(2);
+  };
+
+  auto readRegister = [&](uint8_t reg) -> uint8_t {
+    selectChip();
+    spiBus.transfer(transferCommandByte(kEnc28j60SpiCmdReadControl, reg));
+    const uint8_t value = spiBus.transfer(0x00);
+    deselectChip();
+    return value;
+  };
+
+  auto writeRegister = [&](uint8_t reg, uint8_t value) {
+    selectChip();
+    spiBus.transfer(transferCommandByte(kEnc28j60SpiCmdWriteControl, reg));
+    spiBus.transfer(value);
+    deselectChip();
+  };
+
+  spiBus.begin(app_variant::kEthernetSpiSckPin,
+               app_variant::kEthernetSpiMisoPin,
+               app_variant::kEthernetSpiMosiPin,
+               app_variant::kEthernetCsPin);
+  spiBus.beginTransaction(SPISettings(kEnc28j60ProbeSpiClockHz, MSBFIRST, SPI_MODE0));
+  selectChip();
+  spiBus.transfer(kEnc28j60SpiSoftReset);
+  deselectChip();
+  delay(2);
+
+  const uint8_t econ1Before = readRegister(kEnc28j60RegEcon1);
+  writeRegister(kEnc28j60RegEcon1, kEnc28j60Bank3);
+  const uint8_t econ1After = readRegister(kEnc28j60RegEcon1);
+  const uint8_t revA = readRegister(kEnc28j60RegErevid);
+  const uint8_t revB = readRegister(kEnc28j60RegErevid);
+  spiBus.endTransaction();
+
+  revision = revB;
+  const bool bankSwitchOk = (econ1After & 0x03) == kEnc28j60Bank3;
+  const bool revisionStable = revA == revB;
+  const bool revisionValid = isValidEnc28j60Revision(revB);
+  if (bankSwitchOk && revisionStable && revisionValid) {
+    detail = "revision=" + String(revB) + " ECON1=" + String(econ1After, HEX);
+    return true;
+  }
+
+  detail = "ECON1 antes=0x" + String(econ1Before, HEX) +
+           " despues=0x" + String(econ1After, HEX) +
+           " EREVID=0x" + String(revA, HEX) + "/0x" + String(revB, HEX);
+  return false;
 }
 
 void AppRuntime::setupEthernet() {
@@ -251,11 +380,11 @@ void AppRuntime::setupEthernet() {
   ethernetHasIp = false;
 
   if (!runtimeConfig.ethernet.enabled) {
-    logDebugMessage("ETH", "Ethernet deshabilitado en configuracion");
     return;
   }
 
-  pinMode(app_variant::kEthernetResetPin, OUTPUT);
+  digitalWrite(app_variant::kSdCsPin, HIGH);
+  digitalWrite(app_variant::kEthernetCsPin, HIGH);
   digitalWrite(app_variant::kEthernetResetPin, LOW);
   delay(10);
   digitalWrite(app_variant::kEthernetResetPin, HIGH);
@@ -265,6 +394,18 @@ void AppRuntime::setupEthernet() {
                              " | CS=" + String(app_variant::kEthernetCsPin) +
                              " INT=" + String(app_variant::kEthernetIntPin) +
                              " RST=" + String(app_variant::kEthernetResetPin));
+
+  uint8_t probedRevision = 0;
+  String probeDetail;
+  if (!probeEnc28j60Module(probedRevision, probeDetail)) {
+    logDebugMessage("ETH", "Sondeo SPI ENC28J60 fallido, se omite la inicializacion: " + probeDetail);
+    digitalWrite(app_variant::kEthernetCsPin, HIGH);
+    digitalWrite(app_variant::kEthernetResetPin, LOW);
+    remountStorageIfNeeded("eth_probe_failed");
+    return;
+  }
+
+  logDebugMessage("ETH", "Sondeo SPI ENC28J60 OK | revision " + String(probedRevision));
 
   uint8_t customMac[6];
   String normalizedMac;
@@ -297,6 +438,9 @@ void AppRuntime::setupEthernet() {
 
   if (!ethernetStartedOk) {
     logDebugMessage("ETH", "Fallo inicializando el driver ENC28J60");
+    digitalWrite(app_variant::kEthernetCsPin, HIGH);
+    digitalWrite(app_variant::kEthernetResetPin, LOW);
+    remountStorageIfNeeded("eth_begin_failed");
     return;
   }
 
@@ -765,6 +909,38 @@ void AppRuntime::handleNetworkEvent(arduino_event_id_t event, arduino_event_info
     default:
       break;
   }
+}
+
+void AppRuntime::pollEthernetStatus() {
+  if (!runtimeConfig.ethernet.enabled || !ethernetStarted) {
+    return;
+  }
+
+  const bool linkNow = ETH.linkUp();
+  const bool hasIpNow = linkNow && hasValidIpAddress(ETH.localIP());
+  if (linkNow == ethernetLinkUp && hasIpNow == ethernetHasIp) {
+    return;
+  }
+
+  ethernetLinkUp = linkNow;
+  ethernetHasIp = hasIpNow;
+  applyPreferredDefaultRoute();
+
+  if (linkNow) {
+    logDebugMessage("ETH", "Sondeo Ethernet: enlace activo");
+  } else {
+    logDebugMessage("ETH", "Sondeo Ethernet: enlace inactivo");
+  }
+
+  if (hasIpNow) {
+    logDebugMessage("ETH", "Sondeo Ethernet: IP " + ETH.localIP().toString());
+  }
+
+  if (mqttConnected) {
+    logDebugMessage("MQTT", "Reiniciando MQTT por cambio detectado en sondeo Ethernet");
+    mqttClient.disconnect();
+  }
+  lastMqttAttemptAtMs = 0;
 }
 
 void AppRuntime::applyPreferredDefaultRoute() {
@@ -2076,6 +2252,35 @@ String AppRuntime::mapStorageAlarmToEventCode(const String& storageAlarmCode) {
   return "SD_OK";
 }
 
+bool AppRuntime::remountStorageIfNeeded(const char* reason) {
+  if (storageMounted) {
+    return true;
+  }
+
+  if (millis() - lastStorageRemountAttemptAtMs < kStorageRemountRetryMs) {
+    return false;
+  }
+
+  lastStorageRemountAttemptAtMs = millis();
+  digitalWrite(app_variant::kEthernetCsPin, HIGH);
+  digitalWrite(app_variant::kSdCsPin, HIGH);
+  storageManager.end();
+  storageMounted = storageManager.begin(spiBus,
+                                        app_variant::kSdCsPin,
+                                        app_variant::kEthernetSpiSckPin,
+                                        app_variant::kEthernetSpiMisoPin,
+                                        app_variant::kEthernetSpiMosiPin);
+  storageWriteOk = storageMounted;
+  if (storageMounted) {
+    logDebugMessage("SD", String("Remontada correctamente (") + reason + ") | " +
+                              storageManager.lastInitDiagnostic());
+  } else {
+    logDebugMessage("SD", String("Sigue sin montar (") + reason + ") | " +
+                              storageManager.lastInitDiagnostic());
+  }
+  return storageMounted;
+}
+
 bool AppRuntime::parseMacAddress(const String& rawValue, uint8_t macBytes[6], String& normalized, String& error) {
   String compact = rawValue;
   compact.trim();
@@ -2253,11 +2458,11 @@ NetworkInterfaceSnapshot AppRuntime::buildEthernetSnapshot() {
     snapshot.dns1 = ipAddressToString(ETH.dnsIP(0));
     snapshot.dns2 = ipAddressToString(ETH.dnsIP(1));
   } else {
-    snapshot.ipAddress = ipAddressToString(runtimeConfig.ethernet.ipAddress);
-    snapshot.subnetMask = ipAddressToString(runtimeConfig.ethernet.subnetMask);
-    snapshot.gateway = ipAddressToString(runtimeConfig.ethernet.gateway);
-    snapshot.dns1 = ipAddressToString(runtimeConfig.ethernet.dns1);
-    snapshot.dns2 = ipAddressToString(runtimeConfig.ethernet.dns2);
+    snapshot.ipAddress = runtimeConfig.ethernet.useDhcp ? "-" : ipAddressToString(runtimeConfig.ethernet.ipAddress);
+    snapshot.subnetMask = runtimeConfig.ethernet.useDhcp ? "-" : ipAddressToString(runtimeConfig.ethernet.subnetMask);
+    snapshot.gateway = runtimeConfig.ethernet.useDhcp ? "-" : ipAddressToString(runtimeConfig.ethernet.gateway);
+    snapshot.dns1 = runtimeConfig.ethernet.useDhcp ? "-" : ipAddressToString(runtimeConfig.ethernet.dns1);
+    snapshot.dns2 = runtimeConfig.ethernet.useDhcp ? "-" : ipAddressToString(runtimeConfig.ethernet.dns2);
   }
 
   return snapshot;
@@ -2282,10 +2487,12 @@ StorageSnapshot AppRuntime::buildStorageSnapshot() {
   snapshot.present = storageMounted;
   snapshot.writeOk = storageMounted && storageWriteOk;
 
-  if (!storageMounted) {
+  if (!storageMounted && !remountStorageIfNeeded("buildStorageSnapshot")) {
     snapshot.alarmCode = "missing";
     return snapshot;
   }
+  snapshot.present = storageMounted;
+  snapshot.writeOk = storageMounted && storageWriteOk;
 
   if (storageManager.getUsage(snapshot.totalBytes, snapshot.usedBytes) && snapshot.totalBytes > 0) {
     snapshot.usedPercent = (static_cast<float>(snapshot.usedBytes) * 100.0f) / static_cast<float>(snapshot.totalBytes);
@@ -2563,7 +2770,7 @@ String AppRuntime::buildDataJson() {
 }
 
 void AppRuntime::appendCsvRow(const String& label) {
-  if (!storageMounted) {
+  if (!storageMounted && !remountStorageIfNeeded("appendCsvRow")) {
     storageWriteOk = false;
     logDebugMessage("SD", "No se puede escribir CSV porque la SD no esta montada");
     return;
