@@ -1,21 +1,14 @@
 #include "AppRuntime.h"
 #include <ArduinoJson.h>
 #include <esp_system.h>
-#include <driver/spi_common.h>
-#include <esp_netif.h>
-#include <esp_netif_net_stack.h>
-#include <lwip/netif.h>
-#include <lwip/netifapi.h>
-
-extern esp_netif_t* eth_netif;
-extern void add_esp_interface_netif(esp_interface_t interface, esp_netif_t* esp_netif);
-extern esp_netif_t* get_esp_interface_netif(esp_interface_t interface);
 
 #ifndef BUILD_STAMP
 #define BUILD_STAMP __DATE__ " " __TIME__
 #endif
 
 namespace {
+
+AppRuntime* g_appRuntimeForMqtt = nullptr;
 
 constexpr size_t kValveCount = 4;
 constexpr int kSampleValvePins[kValveCount] = {13, 2, 15, 4};
@@ -32,11 +25,13 @@ constexpr uint32_t kMqttRetryIntervalMs = 10000UL;
 constexpr uint32_t kMqttStatusIntervalMs = 10000UL;
 constexpr uint32_t kStorageRemountRetryMs = 5000UL;
 constexpr uint32_t kEthernetInitDelayMs = 5000UL;
+constexpr uint32_t kEthernetRetryIntervalMs = 15000UL;
 constexpr uint32_t kPendingRestartDelayMs = 750UL;
 constexpr uint32_t kOtaCheckIntervalMs = 3600000UL;
 constexpr uint32_t kNtpSyncIntervalMs = 86400000UL;
-constexpr int kEnc28j60SpiClockMhz = 8;
-constexpr uint32_t kEnc28j60ProbeSpiClockHz = 1000000UL;
+constexpr uint32_t kEthernetDhcpTimeoutMs = 8000UL;
+constexpr uint32_t kEthernetDhcpResponseTimeoutMs = 4000UL;
+constexpr size_t kMqttPacketBufferSize = 2048;
 constexpr uint16_t kRtcFallbackYear = 2020;
 constexpr int kOverflowThreshold = 40000;
 constexpr float kStorageLowSpacePercent = 90.0f;
@@ -58,17 +53,6 @@ constexpr char kValveCycleTitle[] = "Tiempo restante";
 constexpr char kMqttOnlinePayload[] = "online";
 constexpr char kMqttOfflinePayload[] = "offline";
 
-constexpr uint8_t kEnc28j60SpiCmdReadControl = 0x00;
-constexpr uint8_t kEnc28j60SpiCmdWriteControl = 0x02;
-constexpr uint8_t kEnc28j60SpiSoftReset = 0xFF;
-constexpr uint8_t kEnc28j60RegEcon1 = 0x1F;
-constexpr uint8_t kEnc28j60RegErevid = 0x12;
-constexpr uint8_t kEnc28j60Bank3 = 0x03;
-constexpr uint8_t kEnc28j60RevB1 = 0x02;
-constexpr uint8_t kEnc28j60RevB4 = 0x04;
-constexpr uint8_t kEnc28j60RevB5 = 0x05;
-constexpr uint8_t kEnc28j60RevB7 = 0x06;
-
 uint8_t kReadCommand[] = {0xFF, 0x01, 0x86, 0x00, 0x00, 0x00, 0x00, 0x00, 0x79};
 const IPAddress kDefaultWifiStaticIp(192, 168, 1, 80);
 const IPAddress kDefaultEthernetStaticIp(192, 168, 1, 50);
@@ -79,21 +63,6 @@ const IPAddress kDefaultDns2(1, 1, 1, 1);
 
 bool hasValidIpAddress(const IPAddress& address) {
   return static_cast<uint32_t>(address) != 0;
-}
-
-bool isValidEnc28j60Revision(uint8_t revision) {
-  return revision == kEnc28j60RevB1 ||
-         revision == kEnc28j60RevB4 ||
-         revision == kEnc28j60RevB5 ||
-         revision == kEnc28j60RevB7;
-}
-
-void setDefaultRouteForEspNetif(esp_netif_t* espNetif) {
-  if (espNetif == nullptr) {
-    return;
-  }
-
-  netif_set_default(static_cast<struct netif*>(esp_netif_get_netif_impl(espNetif)));
 }
 
 }  // namespace
@@ -165,6 +134,7 @@ void AppRuntime::logPinMap() {
 }
 
 void AppRuntime::setup() {
+  g_appRuntimeForMqtt = this;
   Serial.begin(115200);
   delay(1000);
   Serial.println();
@@ -203,11 +173,19 @@ void AppRuntime::loop() {
 
 void AppRuntime::setupHardware() {
   pinMode(app_variant::kSdCsPin, OUTPUT);
-  digitalWrite(app_variant::kSdCsPin, HIGH);
   pinMode(app_variant::kEthernetCsPin, OUTPUT);
-  digitalWrite(app_variant::kEthernetCsPin, HIGH);
   pinMode(app_variant::kEthernetResetPin, OUTPUT);
+  deselectSpiDevices();
   digitalWrite(app_variant::kEthernetResetPin, LOW);
+  SPI.begin(app_variant::kEthernetSpiSckPin,
+            app_variant::kEthernetSpiMisoPin,
+            app_variant::kEthernetSpiMosiPin);
+  mqttActiveTransport = "none";
+  mqttLastError = "Sin inicializar";
+  mqttLastPublish = "Sin publicaciones";
+  mqttLastCommand = "Sin comandos";
+  ethernetDetailMessage = "Pendiente de iniciar";
+  ethernetCurrentMac = "-";
 
   if (app_variant::kSupportsValveControl) {
     for (size_t i = 0; i < kValveCount; ++i) {
@@ -246,9 +224,8 @@ void AppRuntime::setupRtc() {
 }
 
 void AppRuntime::setupStorage() {
-  digitalWrite(app_variant::kSdCsPin, HIGH);
-  digitalWrite(app_variant::kEthernetCsPin, HIGH);
-  storageMounted = storageManager.begin(spiBus,
+  deselectSpiDevices();
+  storageMounted = storageManager.begin(SPI,
                                         app_variant::kSdCsPin,
                                         app_variant::kEthernetSpiSckPin,
                                         app_variant::kEthernetSpiMisoPin,
@@ -270,6 +247,7 @@ void AppRuntime::setupNetwork() {
   logDebugMessage("WIFI", "Access Point levantado en " + WiFi.softAPIP().toString() +
                                " con SSID " + String(app_variant::kAccessPointSsid));
   ethernetStarted = false;
+  ethernetHardwarePresent = false;
   ethernetLinkUp = false;
   ethernetHasIp = false;
   ethernetInitAttempted = false;
@@ -288,188 +266,121 @@ void AppRuntime::setupNetwork() {
 }
 
 void AppRuntime::manageEthernetInitialization() {
-  if (!runtimeConfig.ethernet.enabled || ethernetStarted || ethernetInitAttempted) {
+  if (!runtimeConfig.ethernet.enabled || ethernetHasIp) {
     return;
   }
 
-  if (millis() < ethernetInitNotBeforeAtMs) {
+  const unsigned long now = millis();
+  if (!ethernetInitAttempted) {
+    if (now < ethernetInitNotBeforeAtMs) {
+      return;
+    }
+  } else if (now - lastEthernetAttemptAtMs < kEthernetRetryIntervalMs) {
     return;
   }
 
   ethernetInitAttempted = true;
+  lastEthernetAttemptAtMs = now;
   setupEthernet();
 }
 
-bool AppRuntime::probeEnc28j60Module(uint8_t& revision, String& detail) {
-  revision = 0;
-  detail = "";
-
-  digitalWrite(app_variant::kSdCsPin, HIGH);
-  digitalWrite(app_variant::kEthernetCsPin, HIGH);
-  digitalWrite(app_variant::kEthernetResetPin, LOW);
-  delay(2);
-  digitalWrite(app_variant::kEthernetResetPin, HIGH);
-  delay(10);
-
-  const auto transferCommandByte = [](uint8_t command, uint8_t address) -> uint8_t {
-    return static_cast<uint8_t>((command << 5) | (address & 0x1F));
-  };
-
-  auto selectChip = []() {
-    delayMicroseconds(2);
-    digitalWrite(app_variant::kEthernetCsPin, LOW);
-    delayMicroseconds(2);
-  };
-
-  auto deselectChip = []() {
-    delayMicroseconds(2);
-    digitalWrite(app_variant::kEthernetCsPin, HIGH);
-    delayMicroseconds(2);
-  };
-
-  auto readRegister = [&](uint8_t reg) -> uint8_t {
-    selectChip();
-    spiBus.transfer(transferCommandByte(kEnc28j60SpiCmdReadControl, reg));
-    const uint8_t value = spiBus.transfer(0x00);
-    deselectChip();
-    return value;
-  };
-
-  auto writeRegister = [&](uint8_t reg, uint8_t value) {
-    selectChip();
-    spiBus.transfer(transferCommandByte(kEnc28j60SpiCmdWriteControl, reg));
-    spiBus.transfer(value);
-    deselectChip();
-  };
-
-  spiBus.begin(app_variant::kEthernetSpiSckPin,
-               app_variant::kEthernetSpiMisoPin,
-               app_variant::kEthernetSpiMosiPin,
-               app_variant::kEthernetCsPin);
-  spiBus.beginTransaction(SPISettings(kEnc28j60ProbeSpiClockHz, MSBFIRST, SPI_MODE0));
-  selectChip();
-  spiBus.transfer(kEnc28j60SpiSoftReset);
-  deselectChip();
-  delay(2);
-
-  const uint8_t econ1Before = readRegister(kEnc28j60RegEcon1);
-  writeRegister(kEnc28j60RegEcon1, kEnc28j60Bank3);
-  const uint8_t econ1After = readRegister(kEnc28j60RegEcon1);
-  const uint8_t revA = readRegister(kEnc28j60RegErevid);
-  const uint8_t revB = readRegister(kEnc28j60RegErevid);
-  spiBus.endTransaction();
-
-  revision = revB;
-  const bool bankSwitchOk = (econ1After & 0x03) == kEnc28j60Bank3;
-  const bool revisionStable = revA == revB;
-  const bool revisionValid = isValidEnc28j60Revision(revB);
-  if (bankSwitchOk && revisionStable && revisionValid) {
-    detail = "revision=" + String(revB) + " ECON1=" + String(econ1After, HEX);
-    return true;
-  }
-
-  detail = "ECON1 antes=0x" + String(econ1Before, HEX) +
-           " despues=0x" + String(econ1After, HEX) +
-           " EREVID=0x" + String(revA, HEX) + "/0x" + String(revB, HEX);
-  return false;
-}
-
 void AppRuntime::setupEthernet() {
-  ethernetStarted = false;
-  ethernetLinkUp = false;
-  ethernetHasIp = false;
-
   if (!runtimeConfig.ethernet.enabled) {
     return;
   }
 
-  digitalWrite(app_variant::kSdCsPin, HIGH);
-  digitalWrite(app_variant::kEthernetCsPin, HIGH);
+  deselectSpiDevices();
   digitalWrite(app_variant::kEthernetResetPin, LOW);
   delay(10);
   digitalWrite(app_variant::kEthernetResetPin, HIGH);
   delay(50);
 
-  logDebugMessage("ETH", "Inicializando ENC28J60 en SPI compartido"
+  logDebugMessage("ETH", "Inicializando ENC28J60 para MQTT"
                              " | CS=" + String(app_variant::kEthernetCsPin) +
                              " INT=" + String(app_variant::kEthernetIntPin) +
                              " RST=" + String(app_variant::kEthernetResetPin));
 
-  uint8_t probedRevision = 0;
-  String probeDetail;
-  if (!probeEnc28j60Module(probedRevision, probeDetail)) {
-    logDebugMessage("ETH", "Sondeo SPI ENC28J60 fallido, se omite la inicializacion: " + probeDetail);
-    digitalWrite(app_variant::kEthernetCsPin, HIGH);
-    digitalWrite(app_variant::kEthernetResetPin, LOW);
-    remountStorageIfNeeded("eth_probe_failed");
+  buildDefaultEthernetMac(ethernetMac);
+  if (runtimeConfig.ethernet.useCustomMac) {
+    uint8_t parsedMac[6];
+    String normalizedMac;
+    String macError;
+    if (parseMacAddress(runtimeConfig.ethernet.macAddress, parsedMac, normalizedMac, macError)) {
+      memcpy(ethernetMac, parsedMac, sizeof(ethernetMac));
+      runtimeConfig.ethernet.macAddress = normalizedMac;
+      logDebugMessage("ETH", "Usando MAC Ethernet personalizada " + normalizedMac);
+    } else {
+      runtimeConfig.ethernet.useCustomMac = false;
+      runtimeConfig.ethernet.macAddress = "";
+      logDebugMessage("ETH", "MAC personalizada invalida, se usa MAC por defecto: " + macError);
+    }
+  }
+
+  char macBuffer[18];
+  snprintf(macBuffer,
+           sizeof(macBuffer),
+           "%02X:%02X:%02X:%02X:%02X:%02X",
+           ethernetMac[0],
+           ethernetMac[1],
+           ethernetMac[2],
+           ethernetMac[3],
+           ethernetMac[4],
+           ethernetMac[5]);
+  ethernetCurrentMac = macBuffer;
+
+  Ethernet.init(app_variant::kEthernetCsPin);
+
+  if (Ethernet.hardwareStatus() == EthernetNoHardware) {
+    ethernetStarted = false;
+    ethernetHardwarePresent = false;
+    ethernetLinkUp = false;
+    ethernetHasIp = false;
+    ethernetDetailMessage = "No se detecta ENC28J60 por SPI";
+    mqttLastError = "Ethernet sin hardware";
+    logDebugMessage("ETH", ethernetDetailMessage);
+    remountStorageIfNeeded("eth_no_hardware");
     return;
   }
 
-  logDebugMessage("ETH", "Sondeo SPI ENC28J60 OK | revision " + String(probedRevision));
-
-  uint8_t customMac[6];
-  String normalizedMac;
-  String macError;
-  const bool useCustomMac = runtimeConfig.ethernet.useCustomMac &&
-      parseMacAddress(runtimeConfig.ethernet.macAddress, customMac, normalizedMac, macError);
-  if (runtimeConfig.ethernet.useCustomMac && !useCustomMac) {
-    logDebugMessage("ETH", "MAC personalizada invalida, se usa MAC de fabrica: " + macError);
-  } else if (useCustomMac) {
-    runtimeConfig.ethernet.macAddress = normalizedMac;
-    logDebugMessage("ETH", "Usando MAC Ethernet personalizada " + normalizedMac);
-  }
-
-  const bool ethernetStartedOk = useCustomMac
-      ? ETH.begin(app_variant::kEthernetSpiMisoPin,
-                  app_variant::kEthernetSpiMosiPin,
-                  app_variant::kEthernetSpiSckPin,
-                  app_variant::kEthernetCsPin,
-                  app_variant::kEthernetIntPin,
-                  kEnc28j60SpiClockMhz,
-                  VSPI_HOST,
-                  customMac)
-      : ETH.begin(app_variant::kEthernetSpiMisoPin,
-                  app_variant::kEthernetSpiMosiPin,
-                  app_variant::kEthernetSpiSckPin,
-                  app_variant::kEthernetCsPin,
-                  app_variant::kEthernetIntPin,
-                  kEnc28j60SpiClockMhz,
-                  VSPI_HOST);
-
-  if (!ethernetStartedOk) {
-    logDebugMessage("ETH", "Fallo inicializando el driver ENC28J60");
-    digitalWrite(app_variant::kEthernetCsPin, HIGH);
-    digitalWrite(app_variant::kEthernetResetPin, LOW);
-    remountStorageIfNeeded("eth_begin_failed");
-    return;
-  }
-
-  ethernetStarted = true;
-
-  if (eth_netif != nullptr) {
-    add_esp_interface_netif(ESP_IF_ETH, eth_netif);
-  }
-
-  ETH.setHostname(runtimeConfig.deviceId.c_str());
+  ethernetHardwarePresent = true;
+  ethernetStarted = false;
+  ethernetLinkUp = Ethernet.linkStatus() == LinkON;
+  ethernetHasIp = false;
 
   if (!runtimeConfig.ethernet.useDhcp) {
-    ETH.config(runtimeConfig.ethernet.ipAddress,
-               runtimeConfig.ethernet.gateway,
-               runtimeConfig.ethernet.subnetMask,
-               runtimeConfig.ethernet.dns1,
-               runtimeConfig.ethernet.dns2);
+    Ethernet.begin(ethernetMac,
+                   runtimeConfig.ethernet.ipAddress,
+                   runtimeConfig.ethernet.dns1,
+                   runtimeConfig.ethernet.gateway,
+                   runtimeConfig.ethernet.subnetMask);
+  } else if (Ethernet.begin(ethernetMac, kEthernetDhcpTimeoutMs, kEthernetDhcpResponseTimeoutMs) == 0) {
+    ethernetDetailMessage = ethernetLinkUp
+        ? "ENC28J60 detectado pero DHCP no respondio"
+        : "ENC28J60 detectado pero no hay link Ethernet";
+    mqttLastError = ethernetDetailMessage;
+    logDebugMessage("ETH", ethernetDetailMessage);
+    remountStorageIfNeeded("eth_dhcp_failed");
+    return;
   }
 
-  const IPAddress initialIp = ETH.localIP();
-  ethernetHasIp = hasValidIpAddress(initialIp);
-  logDebugMessage("ETH", "MAC efectiva " + ETH.macAddress());
+  delay(250);
+  ethernetStarted = true;
+  ethernetLinkUp = Ethernet.linkStatus() == LinkON;
+  ethernetHasIp = ethernetLinkUp && hasValidIpAddress(Ethernet.localIP());
+
   if (ethernetHasIp) {
-    ethernetLinkUp = true;
-    applyPreferredDefaultRoute();
-    logDebugMessage("ETH", "ENC28J60 iniciado con IP " + initialIp.toString() +
-                               " (" + String(runtimeConfig.ethernet.useDhcp ? "DHCP" : "IP fija") + ")");
+    ethernetDetailMessage = "MQTT por Ethernet listo en " + Ethernet.localIP().toString();
+    mqttLastError = "Sin errores";
+    logDebugMessage("ETH", ethernetDetailMessage + " | MAC " + ethernetCurrentMac);
   } else {
-    logDebugMessage("ETH", "Driver ENC28J60 iniciado; esperando enlace/IP");
+    ethernetDetailMessage = runtimeConfig.ethernet.useDhcp
+        ? "ENC28J60 iniciado, esperando IP por DHCP"
+        : "ENC28J60 iniciado, esperando link para IP fija";
+    logDebugMessage("ETH", ethernetDetailMessage + " | MAC " + ethernetCurrentMac);
+  }
+
+  if (!storageMounted) {
+    remountStorageIfNeeded("eth_initialized");
   }
 }
 
@@ -479,24 +390,15 @@ void AppRuntime::setupMqtt() {
   }
 
   refreshMqttTopics();
-  mqttClient.onConnect([this](bool sessionPresent) {
-    handleMqttConnect(sessionPresent);
-  });
-  mqttClient.onDisconnect([this](AsyncMqttClientDisconnectReason reason) {
-    handleMqttDisconnect(reason);
-  });
-  mqttClient.onMessage([this](char* topic,
-                              char* payload,
-                              AsyncMqttClientMessageProperties properties,
-                              size_t len,
-                              size_t index,
-                              size_t total) {
-    handleMqttMessage(topic, payload, properties, len, index, total);
-  });
   mqttClient.setServer(runtimeConfig.mqtt.brokerHost.c_str(), runtimeConfig.mqtt.brokerPort);
-  mqttClient.setClientId(runtimeConfig.mqtt.clientId.c_str());
   mqttClient.setKeepAlive(30);
-  mqttClient.setWill(mqttTopicAvailability.c_str(), 1, true, kMqttOfflinePayload);
+  mqttClient.setBufferSize(kMqttPacketBufferSize);
+  mqttClient.setCallback(AppRuntime::handleMqttMessageStatic);
+  mqttActiveTransport = "none";
+  mqttLastError = runtimeConfig.mqtt.enabled ? "Sin conexion" : "MQTT deshabilitado";
+  mqttLastPublish = "Sin publicaciones";
+  mqttLastCommand = "Sin comandos";
+  mqttUsingEthernet = false;
   logDebugMessage("MQTT", "Configurado broker " + runtimeConfig.mqtt.brokerHost + ":" +
                               String(runtimeConfig.mqtt.brokerPort) +
                               " clientId=" + runtimeConfig.mqtt.clientId);
@@ -835,74 +737,24 @@ void AppRuntime::handleNetworkEvent(arduino_event_id_t event, arduino_event_info
   switch (event) {
     case ARDUINO_EVENT_WIFI_STA_GOT_IP:
       logDebugMessage("WIFI", "STA obtuvo IP " + WiFi.localIP().toString());
-      if (!ethernetHasIp) {
-        applyPreferredDefaultRoute();
-      }
       lastMqttAttemptAtMs = 0;
       break;
 
     case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
       logDebugMessage("WIFI", "STA desconectado de la red");
-      if (!ethernetHasIp) {
-        applyPreferredDefaultRoute();
-        if (mqttConnected) {
-          logDebugMessage("MQTT", "Reiniciando MQTT por perdida de WiFi STA");
-          mqttClient.disconnect();
-        }
+      if (mqttConnected && !mqttUsingEthernet) {
+        mqttClient.disconnect();
+        handleMqttDisconnect("WiFi STA desconectado");
       }
       lastMqttAttemptAtMs = 0;
       break;
 
     case ARDUINO_EVENT_WIFI_STA_LOST_IP:
       logDebugMessage("WIFI", "STA perdio la IP");
-      if (!ethernetHasIp) {
-        applyPreferredDefaultRoute();
-      }
-      lastMqttAttemptAtMs = 0;
-      break;
-
-    case ARDUINO_EVENT_ETH_START:
-      ethernetStarted = true;
-      logDebugMessage("ETH", "Interfaz Ethernet iniciada");
-      break;
-
-    case ARDUINO_EVENT_ETH_CONNECTED:
-      ethernetStarted = true;
-      ethernetLinkUp = true;
-      logDebugMessage("ETH", "Cable Ethernet enlazado");
-      break;
-
-    case ARDUINO_EVENT_ETH_GOT_IP:
-      ethernetStarted = true;
-      ethernetLinkUp = true;
-      ethernetHasIp = true;
-      applyPreferredDefaultRoute();
-      logDebugMessage("ETH", "Ethernet obtuvo IP " + ETH.localIP().toString());
-      if (mqttConnected) {
-        logDebugMessage("MQTT", "Reiniciando MQTT para priorizar Ethernet");
+      if (mqttConnected && !mqttUsingEthernet) {
         mqttClient.disconnect();
+        handleMqttDisconnect("WiFi STA perdio IP");
       }
-      lastMqttAttemptAtMs = 0;
-      break;
-
-    case ARDUINO_EVENT_ETH_DISCONNECTED:
-      ethernetLinkUp = false;
-      ethernetHasIp = false;
-      logDebugMessage("ETH", "Cable Ethernet desconectado");
-      applyPreferredDefaultRoute();
-      if (mqttConnected) {
-        logDebugMessage("MQTT", "Reiniciando MQTT por caida de Ethernet");
-        mqttClient.disconnect();
-      }
-      lastMqttAttemptAtMs = 0;
-      break;
-
-    case ARDUINO_EVENT_ETH_STOP:
-      ethernetStarted = false;
-      ethernetLinkUp = false;
-      ethernetHasIp = false;
-      logDebugMessage("ETH", "Interfaz Ethernet detenida");
-      applyPreferredDefaultRoute();
       lastMqttAttemptAtMs = 0;
       break;
 
@@ -912,46 +764,73 @@ void AppRuntime::handleNetworkEvent(arduino_event_id_t event, arduino_event_info
 }
 
 void AppRuntime::pollEthernetStatus() {
-  if (!runtimeConfig.ethernet.enabled || !ethernetStarted) {
+  if (!runtimeConfig.ethernet.enabled) {
     return;
   }
 
-  const bool linkNow = ETH.linkUp();
-  const bool hasIpNow = linkNow && hasValidIpAddress(ETH.localIP());
+  if (ethernetStarted && runtimeConfig.ethernet.useDhcp) {
+    switch (Ethernet.maintain()) {
+      case 2:
+        logDebugMessage("ETH", "Lease DHCP renovado");
+        break;
+      case 4:
+        logDebugMessage("ETH", "Rebind DHCP exitoso");
+        break;
+      default:
+        break;
+    }
+  }
+
+  if (!ethernetHardwarePresent) {
+    return;
+  }
+
+  const bool linkNow = Ethernet.linkStatus() == LinkON;
+  const IPAddress ipNow = Ethernet.localIP();
+  const bool hasIpNow = linkNow && hasValidIpAddress(ipNow);
   if (linkNow == ethernetLinkUp && hasIpNow == ethernetHasIp) {
     return;
   }
 
   ethernetLinkUp = linkNow;
   ethernetHasIp = hasIpNow;
-  applyPreferredDefaultRoute();
-
-  if (linkNow) {
-    logDebugMessage("ETH", "Sondeo Ethernet: enlace activo");
+  if (ethernetHasIp) {
+    ethernetDetailMessage = "MQTT por Ethernet listo en " + ipNow.toString();
+    logDebugMessage("ETH", ethernetDetailMessage);
+  } else if (linkNow) {
+    ethernetDetailMessage = runtimeConfig.ethernet.useDhcp
+        ? "Link Ethernet activo, esperando IP DHCP"
+        : "Link Ethernet activo, usando IP fija configurada";
+    logDebugMessage("ETH", ethernetDetailMessage);
   } else {
-    logDebugMessage("ETH", "Sondeo Ethernet: enlace inactivo");
+    ethernetDetailMessage = "Sin link Ethernet";
+    logDebugMessage("ETH", ethernetDetailMessage);
   }
 
-  if (hasIpNow) {
-    logDebugMessage("ETH", "Sondeo Ethernet: IP " + ETH.localIP().toString());
-  }
-
-  if (mqttConnected) {
-    logDebugMessage("MQTT", "Reiniciando MQTT por cambio detectado en sondeo Ethernet");
+  if ((mqttUsingEthernet && mqttConnected && !ethernetHasIp) ||
+      (!mqttUsingEthernet && mqttConnected && ethernetHasIp)) {
     mqttClient.disconnect();
+    handleMqttDisconnect("Cambio detectado en Ethernet");
   }
   lastMqttAttemptAtMs = 0;
 }
 
 void AppRuntime::applyPreferredDefaultRoute() {
-  if (runtimeConfig.ethernet.enabled && ethernetHasIp && eth_netif != nullptr) {
-    setDefaultRouteForEspNetif(eth_netif);
-    return;
-  }
+}
 
-  if (WiFi.status() == WL_CONNECTED) {
-    setDefaultRouteForEspNetif(get_esp_interface_netif(ESP_IF_WIFI_STA));
-  }
+void AppRuntime::deselectSpiDevices() {
+  digitalWrite(app_variant::kEthernetCsPin, HIGH);
+  digitalWrite(app_variant::kSdCsPin, HIGH);
+}
+
+void AppRuntime::buildDefaultEthernetMac(uint8_t macBytes[6]) {
+  const uint64_t chipMac = ESP.getEfuseMac();
+  macBytes[0] = 0x02;
+  macBytes[1] = static_cast<uint8_t>((chipMac >> 40) & 0xFF);
+  macBytes[2] = static_cast<uint8_t>((chipMac >> 32) & 0xFF);
+  macBytes[3] = static_cast<uint8_t>((chipMac >> 24) & 0xFF);
+  macBytes[4] = static_cast<uint8_t>((chipMac >> 16) & 0xFF);
+  macBytes[5] = static_cast<uint8_t>((chipMac >> 8) & 0xFF);
 }
 
 void AppRuntime::refreshMqttTopics() {
@@ -983,26 +862,44 @@ void AppRuntime::manageMqttConnection() {
       if (ethernetHasIp || WiFi.status() == WL_CONNECTED) {
         publishMqttAvailability(false);
       }
-      logDebugMessage("MQTT", "Desconectando MQTT porque no hay condiciones de red listas");
       mqttClient.disconnect();
+      handleMqttDisconnect("Sin transporte de red disponible");
     }
     mqttConnected = false;
-    return;
-  }
-
-  if (!mqttConnected) {
-    if (lastMqttAttemptAtMs == 0 || millis() - lastMqttAttemptAtMs >= kMqttRetryIntervalMs) {
-      lastMqttAttemptAtMs = millis();
-      logDebugMessage("MQTT", "Intentando conectar con broker " + runtimeConfig.mqtt.brokerHost + ":" +
-                                  String(runtimeConfig.mqtt.brokerPort));
-      mqttClient.connect();
+    mqttActiveTransport = "none";
+    mqttUsingEthernet = false;
+    if (!runtimeConfig.mqtt.enabled) {
+      mqttLastError = "MQTT deshabilitado";
+    } else if (runtimeConfig.mqtt.brokerHost.isEmpty()) {
+      mqttLastError = "Broker MQTT no configurado";
+    } else {
+      mqttLastError = "Sin Ethernet ni WiFi STA para MQTT";
     }
     return;
   }
 
-  publishMqttTelemetry();
-  publishMqttStatus();
-  publishMqttStorageAlarmIfNeeded();
+  if (mqttConnected) {
+    if (!mqttClient.loop()) {
+      const int state = mqttClient.state();
+      mqttClient.disconnect();
+      handleMqttDisconnect("PubSubClient state=" + String(state));
+      return;
+    }
+
+    publishMqttTelemetry();
+    publishMqttStatus();
+    publishMqttStorageAlarmIfNeeded();
+    return;
+  }
+
+  if (lastMqttAttemptAtMs != 0 && millis() - lastMqttAttemptAtMs < kMqttRetryIntervalMs) {
+    return;
+  }
+
+  lastMqttAttemptAtMs = millis();
+  logDebugMessage("MQTT", "Intentando conectar con broker " + runtimeConfig.mqtt.brokerHost + ":" +
+                              String(runtimeConfig.mqtt.brokerPort));
+  connectMqtt();
 }
 
 void AppRuntime::processPendingRestart() {
@@ -1023,7 +920,7 @@ void AppRuntime::publishMqttAvailability(bool online) {
   }
 
   const char* payload = online ? kMqttOnlinePayload : kMqttOfflinePayload;
-  mqttClient.publish(mqttTopicAvailability.c_str(), 1, true, payload);
+  mqttPublish(mqttTopicAvailability, payload, true);
 }
 
 void AppRuntime::publishMqttTelemetry(bool force) {
@@ -1036,8 +933,9 @@ void AppRuntime::publishMqttTelemetry(bool force) {
   }
 
   const String payload = buildMqttTelemetryJson();
-  mqttClient.publish(mqttTopicTelemetry.c_str(), 0, false, payload.c_str());
-  lastTelemetryPublishAtMs = millis();
+  if (mqttPublish(mqttTopicTelemetry, payload, false)) {
+    lastTelemetryPublishAtMs = millis();
+  }
 }
 
 void AppRuntime::publishMqttStatus(bool force) {
@@ -1050,8 +948,9 @@ void AppRuntime::publishMqttStatus(bool force) {
   }
 
   const String payload = buildMqttStatusJson();
-  mqttClient.publish(mqttTopicStatus.c_str(), 1, true, payload.c_str());
-  lastStatusPublishAtMs = millis();
+  if (mqttPublish(mqttTopicStatus, payload, true)) {
+    lastStatusPublishAtMs = millis();
+  }
 }
 
 void AppRuntime::publishMqttCurrentConfig(bool force) {
@@ -1060,8 +959,7 @@ void AppRuntime::publishMqttCurrentConfig(bool force) {
   }
 
   const String payload = buildMqttCurrentConfigJson();
-  mqttClient.publish(mqttTopicConfig.c_str(), 1, true, payload.c_str());
-  if (force) {
+  if (mqttPublish(mqttTopicConfig, payload, true) && force) {
     lastStatusPublishAtMs = 0;
   }
 }
@@ -1072,7 +970,7 @@ void AppRuntime::publishMqttAlarm(const String& code, const String& severity, co
   }
 
   const String payload = buildMqttAlarmJson(code, severity, message);
-  mqttClient.publish(mqttTopicAlarm.c_str(), 1, false, payload.c_str());
+  mqttPublish(mqttTopicAlarm, payload, false);
 }
 
 void AppRuntime::publishMqttStorageAlarmIfNeeded() {
@@ -1124,18 +1022,19 @@ void AppRuntime::publishMqttCommandResponse(const String& requestId, bool ok, co
 
   String payload;
   serializeJson(doc, payload);
-  mqttClient.publish(mqttTopicCommandResponse.c_str(), 1, false, payload.c_str());
+  mqttPublish(mqttTopicCommandResponse, payload, false);
 }
 
-void AppRuntime::handleMqttConnect(bool sessionPresent) {
-  (void)sessionPresent;
+void AppRuntime::handleMqttConnect() {
   mqttConnected = true;
   lastMqttAttemptAtMs = 0;
   lastTelemetryPublishAtMs = 0;
   lastStatusPublishAtMs = 0;
   lastPublishedStorageAlarmCode = "";
-  mqttClient.subscribe(mqttTopicCommand.c_str(), 1);
-  logDebugMessage("MQTT", "Conectado. Suscripto a " + mqttTopicCommand);
+  mqttLastError = "Sin errores";
+  mqttLastPublish = "Sesion MQTT establecida por " + mqttActiveTransport;
+  mqttClient.subscribe(mqttTopicCommand.c_str());
+  logDebugMessage("MQTT", "Conectado por " + mqttActiveTransport + ". Suscripto a " + mqttTopicCommand);
   publishMqttAvailability(true);
   publishMqttCurrentConfig(true);
   publishMqttStatus(true);
@@ -1143,40 +1042,93 @@ void AppRuntime::handleMqttConnect(bool sessionPresent) {
   publishMqttStorageAlarmIfNeeded();
 }
 
-void AppRuntime::handleMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
-  (void)reason;
+void AppRuntime::handleMqttDisconnect(const String& reason) {
   mqttConnected = false;
-  logDebugMessage("MQTT", "Desconectado del broker");
+  mqttLastError = reason;
+  logDebugMessage("MQTT", "Desconectado del broker: " + reason);
 }
 
-void AppRuntime::handleMqttMessage(char* topic,
-                                   char* payload,
-                                   AsyncMqttClientMessageProperties properties,
-                                   size_t len,
-                                   size_t index,
-                                   size_t total) {
-  (void)properties;
-
-  if (index == 0) {
-    mqttIncomingTopic = topic != nullptr ? String(topic) : "";
-    mqttIncomingPayload = "";
-    mqttIncomingPayload.reserve(total);
+bool AppRuntime::ensureMqttTransportSelected(const char*& transportName) {
+  if (runtimeConfig.ethernet.enabled && ethernetHasIp) {
+    mqttClient.setClient(ethernetMqttClient);
+    mqttUsingEthernet = true;
+    transportName = "ethernet";
+    return true;
   }
 
-  for (size_t i = 0; i < len; ++i) {
-    mqttIncomingPayload += payload[i];
+  if (runtimeConfig.wifiSta.enabled && WiFi.status() == WL_CONNECTED) {
+    mqttClient.setClient(wifiMqttClient);
+    mqttUsingEthernet = false;
+    transportName = "wifi";
+    return true;
   }
 
-  if (index + len < total) {
+  mqttUsingEthernet = false;
+  transportName = "none";
+  return false;
+}
+
+bool AppRuntime::connectMqtt() {
+  const char* transportName = "none";
+  if (!ensureMqttTransportSelected(transportName)) {
+    mqttActiveTransport = "none";
+    mqttLastError = "Sin Ethernet ni WiFi STA para MQTT";
+    return false;
+  }
+
+  mqttClient.setServer(runtimeConfig.mqtt.brokerHost.c_str(), runtimeConfig.mqtt.brokerPort);
+  const bool connected = mqttClient.connect(runtimeConfig.mqtt.clientId.c_str(),
+                                            mqttTopicAvailability.c_str(),
+                                            0,
+                                            true,
+                                            kMqttOfflinePayload);
+  if (!connected) {
+    mqttActiveTransport = transportName;
+    mqttLastError = "Fallo MQTT state=" + String(mqttClient.state()) + " por " + transportName;
+    logDebugMessage("MQTT", mqttLastError);
+    return false;
+  }
+
+  mqttActiveTransport = transportName;
+  handleMqttConnect();
+  return true;
+}
+
+bool AppRuntime::mqttPublish(const String& topic, const String& payload, bool retained) {
+  if (!mqttConnected) {
+    return false;
+  }
+
+  const bool published = mqttClient.publish(topic.c_str(), payload.c_str(), retained);
+  if (published) {
+    mqttLastPublish = topic + " por " + mqttActiveTransport;
+  } else {
+    mqttLastError = "Fallo publish en " + topic + " state=" + String(mqttClient.state());
+    logDebugMessage("MQTT", mqttLastError);
+  }
+  return published;
+}
+
+void AppRuntime::handleMqttMessageStatic(char* topic, byte* payload, unsigned int length) {
+  if (g_appRuntimeForMqtt == nullptr) {
     return;
   }
 
-  if (mqttIncomingTopic == mqttTopicCommand) {
-    handleMqttCommand(mqttIncomingPayload);
+  String topicText = topic != nullptr ? String(topic) : "";
+  String payloadText;
+  payloadText.reserve(length);
+  for (unsigned int i = 0; i < length; ++i) {
+    payloadText += static_cast<char>(payload[i]);
   }
+  g_appRuntimeForMqtt->handleMqttMessage(topicText, payloadText);
+}
 
-  mqttIncomingTopic = "";
-  mqttIncomingPayload = "";
+void AppRuntime::handleMqttMessage(const String& topic, const String& payload) {
+  mqttLastCommand = topic + " <= " + payload;
+  logDebugMessage("MQTT", "Comando recibido por " + mqttActiveTransport + ": " + payload);
+  if (topic == mqttTopicCommand) {
+    handleMqttCommand(payload);
+  }
 }
 
 void AppRuntime::handleMqttCommand(const String& payload) {
@@ -2262,10 +2214,9 @@ bool AppRuntime::remountStorageIfNeeded(const char* reason) {
   }
 
   lastStorageRemountAttemptAtMs = millis();
-  digitalWrite(app_variant::kEthernetCsPin, HIGH);
-  digitalWrite(app_variant::kSdCsPin, HIGH);
+  deselectSpiDevices();
   storageManager.end();
-  storageMounted = storageManager.begin(spiBus,
+  storageMounted = storageManager.begin(SPI,
                                         app_variant::kSdCsPin,
                                         app_variant::kEthernetSpiSckPin,
                                         app_variant::kEthernetSpiMisoPin,
@@ -2447,16 +2398,16 @@ NetworkInterfaceSnapshot AppRuntime::buildEthernetSnapshot() {
   snapshot.usingDhcp = runtimeConfig.ethernet.useDhcp;
   snapshot.linkUp = ethernetLinkUp;
   snapshot.customMac = runtimeConfig.ethernet.useCustomMac;
-  snapshot.macAddress = (runtimeConfig.ethernet.enabled && ethernetStarted)
-      ? ETH.macAddress()
+  snapshot.macAddress = runtimeConfig.ethernet.enabled
+      ? ethernetCurrentMac
       : (runtimeConfig.ethernet.useCustomMac ? runtimeConfig.ethernet.macAddress : "");
 
   if (runtimeConfig.ethernet.enabled && ethernetStarted && ethernetHasIp) {
-    snapshot.ipAddress = ipAddressToString(ETH.localIP());
-    snapshot.subnetMask = ipAddressToString(ETH.subnetMask());
-    snapshot.gateway = ipAddressToString(ETH.gatewayIP());
-    snapshot.dns1 = ipAddressToString(ETH.dnsIP(0));
-    snapshot.dns2 = ipAddressToString(ETH.dnsIP(1));
+    snapshot.ipAddress = ipAddressToString(Ethernet.localIP());
+    snapshot.subnetMask = ipAddressToString(Ethernet.subnetMask());
+    snapshot.gateway = ipAddressToString(Ethernet.gatewayIP());
+    snapshot.dns1 = ipAddressToString(Ethernet.dnsServerIP());
+    snapshot.dns2 = runtimeConfig.ethernet.useDhcp ? "-" : ipAddressToString(runtimeConfig.ethernet.dns2);
   } else {
     snapshot.ipAddress = runtimeConfig.ethernet.useDhcp ? "-" : ipAddressToString(runtimeConfig.ethernet.ipAddress);
     snapshot.subnetMask = runtimeConfig.ethernet.useDhcp ? "-" : ipAddressToString(runtimeConfig.ethernet.subnetMask);
@@ -2622,9 +2573,14 @@ String AppRuntime::buildMqttStatusJson() {
   network["ethernet_mode"] = snapshot.ethernet.usingDhcp ? "dhcp" : "static";
   network["ethernet_mac"] = snapshot.ethernet.macAddress;
   network["ethernet_custom_mac"] = snapshot.ethernet.customMac;
+  network["ethernet_detail"] = ethernetDetailMessage;
   network["ap_enabled"] = snapshot.accessPoint.enabled;
   network["ap_ip"] = snapshot.accessPoint.ipAddress;
   network["mqtt_connected"] = snapshot.mqttConnected;
+  network["mqtt_transport"] = mqttActiveTransport;
+  network["mqtt_last_error"] = mqttLastError;
+  network["mqtt_last_publish"] = mqttLastPublish;
+  network["mqtt_last_command"] = mqttLastCommand;
 
   JsonObject storage = doc.createNestedObject("storage");
   storage["sd_present"] = snapshot.storage.present;
@@ -2677,6 +2633,7 @@ String AppRuntime::buildMqttCurrentConfigJson() {
   network["ethernet_dns2"] = ipAddressToString(runtimeConfig.ethernet.dns2);
   network["ethernet_custom_mac_enabled"] = runtimeConfig.ethernet.useCustomMac;
   network["ethernet_mac"] = runtimeConfig.ethernet.macAddress;
+  network["ethernet_current_mac"] = ethernetCurrentMac;
   network["ap_enabled"] = true;
   network["ap_ssid"] = app_variant::kAccessPointSsid;
 
@@ -2733,10 +2690,16 @@ String AppRuntime::buildDataJson() {
   json += ",\"wifiSSID\":\"" + jsonEscape(snapshot.wifiSta.connected ? WiFi.SSID() : "-") + "\"";
   json += ",\"activeUplink\":\"" + jsonEscape(snapshot.activeUplink) + "\"";
   json += ",\"mqttConnected\":" + String(snapshot.mqttConnected ? "true" : "false");
+  json += ",\"mqttTransport\":\"" + jsonEscape(mqttActiveTransport) + "\"";
+  json += ",\"mqttLastError\":\"" + jsonEscape(mqttLastError) + "\"";
+  json += ",\"mqttLastPublish\":\"" + jsonEscape(mqttLastPublish) + "\"";
+  json += ",\"mqttLastCommand\":\"" + jsonEscape(mqttLastCommand) + "\"";
   json += ",\"ethernetEnabled\":" + String(snapshot.ethernet.enabled ? "true" : "false");
-  json += ",\"ethernetStatus\":\"" + jsonEscape(snapshot.ethernet.connected ? "Conectado" : "Desconectado") + "\"";
+  json += ",\"ethernetStatus\":\"" + jsonEscape(snapshot.ethernet.connected ? "MQTT listo" : (snapshot.ethernet.linkUp ? "Link activo" : "Sin link")) + "\"";
   json += ",\"ethernetIP\":\"" + jsonEscape(snapshot.ethernet.ipAddress) + "\"";
   json += ",\"ethernetMode\":\"" + jsonEscape(snapshot.ethernet.usingDhcp ? "dhcp" : "static") + "\"";
+  json += ",\"ethernetDetail\":\"" + jsonEscape(ethernetDetailMessage) + "\"";
+  json += ",\"ethernetMac\":\"" + jsonEscape(snapshot.ethernet.macAddress) + "\"";
   json += ",\"state\":\"" + jsonEscape(getStateName()) + "\"";
   json += ",\"mode\":\"" + jsonEscape(snapshot.process.mode) + "\"";
   json += ",\"sourceTitle\":\"" + jsonEscape(snapshot.process.sourceTitle) + "\"";

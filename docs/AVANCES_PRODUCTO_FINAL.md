@@ -1,130 +1,119 @@
 # Avances Producto Final
 
-## Estado
+## Estado actual
 
-El proyecto quedó preparado para trabajar con dos variantes dentro del mismo repo:
+El proyecto mantiene dos variantes dentro del mismo repo:
 
 - `valvulas`
 - `entrada_unica`
 
-Las dos variantes compilan correctamente y comparten la misma base de:
+Las dos compilan correctamente y comparten la misma base de:
 
-- web local
-- API HTTP
-- MQTT para Node-RED
-- logging en SD con `SdFat`
+- web local por AP
+- WiFi STA opcional
+- MQTT para integracion externa
+- logging CSV en SD
 - OTA
-- WiFi AP permanente
-- WiFi STA
-- Ethernet `ENC28J60`
+- diagnostico por serie
 
-## Alcance implementado
+## Arquitectura de red
 
-### Firmware base
+- `AP WiFi`: siempre encendido para entrar a la web local del equipo.
+- `WiFi STA`: opcional. Si conecta, mantiene la web y puede usarse como respaldo para MQTT.
+- `Ethernet ENC28J60`: usado como transporte saliente para MQTT hacia la red privada del cliente.
 
-- Dos builds en `platformio.ini`
-- Configuración por variante en `AppVariantConfig.h`
-- Snapshot interno único para web, API y MQTT
-- Logs serie de sensores, SD, WiFi, MQTT, RTC, OTA, Ethernet y pinmap
+Prioridad de transporte MQTT:
 
-### Sensado y proceso
+1. Ethernet
+2. WiFi STA
 
-- Variante `valvulas` con ciclo de muestra/purga y estado de válvula activa
-- Variante `entrada_unica` en medición continua con motor activo desde arranque
-- JSON de telemetría con:
-  - `CO`
-  - `H2S`
-  - `O2`
-  - `CH4`
-  - `CO2`
-  - modo
-  - válvula activa
-  - purga activa
-  - motor activo
+La web del ESP no se sirve por Ethernet. La web sigue saliendo por AP y por WiFi STA cuando el equipo se conecta a esa red.
 
-### SD
+## MQTT implementado
 
-- Migración a `SdFat`
-- Escritura CSV
-- Listado, descarga y borrado desde web/API
-- Estado de almacenamiento:
+Topics:
+
+- `nariz/{device_id}/availability`
+- `nariz/{device_id}/telemetry`
+- `nariz/{device_id}/status`
+- `nariz/{device_id}/alarm`
+- `nariz/{device_id}/config/current`
+- `nariz/{device_id}/cmd`
+- `nariz/{device_id}/cmd/response`
+
+Comandos ya soportados:
+
+- `request_status`
+- `request_config`
+- `reboot`
+- `set_time`
+- `set_valves`
+- `set_wifi_sta`
+- `set_ethernet`
+- `set_mqtt`
+- `set_ota`
+- `ota_check_now`
+- `delete_file`
+
+## Sensores y proceso
+
+- `valvulas`: ciclo muestra/purga con valvula activa informada en web y MQTT.
+- `entrada_unica`: medicion continua con motor activo desde arranque.
+
+Telemetria JSON:
+
+- `co_ppm`
+- `h2s_ppm`
+- `o2_percent`
+- `ch4_percent_lel`
+- `co2_ppm`
+- `mode`
+- `source_label`
+- `active_sample_valve`
+- `purge_active`
+- `motor_active`
+
+## SD
+
+- `StorageManager` unificado sobre `SD.h`
+- escritura CSV
+- listado, descarga y borrado desde web/API
+- estados:
   - `ok`
   - `missing`
   - `write_error`
   - `low_space`
   - `full`
 
-### MQTT / Node-RED
+## Configuracion disponible en la web
 
-- Topics:
-  - `nariz/{device_id}/availability`
-  - `nariz/{device_id}/telemetry`
-  - `nariz/{device_id}/status`
-  - `nariz/{device_id}/alarm`
-  - `nariz/{device_id}/config/current`
-  - `nariz/{device_id}/cmd`
-  - `nariz/{device_id}/cmd/response`
-- Publicación de telemetría, estado, alarmas y configuración actual
-- Comandos implementados:
-  - `request_status`
-  - `request_config`
-  - `reboot`
-  - `set_time`
-  - `set_valves`
-  - `set_wifi_sta`
-  - `set_ethernet`
-  - `set_mqtt`
-  - `set_ota`
-  - `ota_check_now`
-  - `delete_file`
+- valvulas
+- fecha y hora
+- seguridad
+- WiFi STA
+- Ethernet
+- MQTT
+- OTA
 
-### Red
+La seccion de Ethernet permite:
 
-- AP siempre encendido
-- WiFi STA configurable con DHCP o IP fija
-- Ethernet `ENC28J60` configurable con DHCP o IP fija
-- MAC Ethernet configurable desde la web/AP y persistida en memoria
-- Prioridad de uplink:
-  1. Ethernet
-  2. WiFi STA
-  3. AP local para mantenimiento
-
-### Web y API
-
-- Web operativa para ambas variantes
-- Configuración desde la web de:
-  - válvulas
-  - fecha y hora
-  - seguridad
-  - WiFi STA
-  - Ethernet
-  - MQTT
-  - OTA
-- API HTTP disponible:
-  - `GET /api/v1/telemetry`
-  - `GET /api/v1/status`
-  - `GET /api/v1/config`
-  - `GET /api/v1/files`
-  - `POST /api/v1/config/valves`
-  - `POST /api/v1/config/network`
-  - `POST /api/v1/config/mqtt`
-  - `POST /api/v1/config/ota`
-  - `POST /api/v1/time`
-  - `POST /api/v1/reboot`
-  - `POST /api/v1/ota/check`
-  - `DELETE /api/v1/files?file=/archivo.csv`
+- `DHCP` o `IP fija`
+- `IP`
+- `Mascara`
+- `Gateway`
+- `DNS1`
+- `DNS2`
+- `MAC` personalizada opcional
 
 ## Valores por defecto
 
-- `device_id` válvulas: `nariz-valvulas-001`
-- `device_id` entrada única: `nariz-entrada-unica-001`
-- MQTT broker por defecto: `192.168.1.10:1883`
-- Topic root: `nariz`
-- Telemetría MQTT: `1000 ms`
+- `device_id` valvulas: `nariz-valvulas-001`
+- `device_id` entrada_unica: `nariz-entrada-unica-001`
+- broker MQTT por defecto: `192.168.1.10:1883`
+- topic root: `nariz`
+- intervalo de telemetria: `1000 ms`
 
-## Ethernet ENC28J60
-
-Pines reservados:
+## Pines ENC28J60
 
 - `SCK = GPIO18`
 - `MISO = GPIO19`
@@ -133,48 +122,49 @@ Pines reservados:
 - `INT = GPIO34`
 - `RST = GPIO16`
 
-Comparte bus SPI con la SD:
+Comparte SPI con la SD:
 
 - `SD CS = GPIO5`
 
-## Cómo cargar cada variante
+## Como cargar cada variante
 
-### Con válvulas
+### Valvulas
 
 ```powershell
-& "$env:USERPROFILE\\.platformio\\penv\\Scripts\\platformio.exe" run -e valvulas -t upload
+& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" run -e valvulas -t upload
 ```
 
-### Entrada única
+### Entrada unica
 
 ```powershell
-& "$env:USERPROFILE\\.platformio\\penv\\Scripts\\platformio.exe" run -e entrada_unica -t upload
+& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" run -e entrada_unica -t upload
 ```
 
 ### Monitor serie
 
 ```powershell
-& "$env:USERPROFILE\\.platformio\\penv\\Scripts\\platformio.exe" device monitor -b 115200
+& "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe" device monitor -b 115200
 ```
 
-## Prueba rápida sugerida
+## Checklist de prueba
 
 1. Flashear la variante correcta.
-2. Abrir monitor serie y verificar:
+2. Confirmar en serie:
    - banner de arranque
    - `PINMAP`
    - SD montada
    - lecturas de sensores
    - AP levantado
-   - conexión WiFi o Ethernet
+   - estado WiFi STA
+   - estado Ethernet
    - estado MQTT
 3. Entrar a la web local y revisar:
    - sensores
    - uplink activo
    - estado SD
-   - MQTT
-   - OTA
-4. Probar Node-RED leyendo:
+   - transporte MQTT
+   - ultimo publish y ultimo error MQTT
+4. Probar Node-RED o broker leyendo:
    - `telemetry`
    - `status`
    - `alarm`
@@ -182,18 +172,17 @@ Comparte bus SPI con la SD:
    - `request_status`
    - `set_time`
    - `reboot`
-   - `set_valves` en la variante con válvulas
-6. Si hay ENC28J60 conectado, probar con cable al router y confirmar en serie:
-   - enlace Ethernet
-   - IP obtenida
-   - MAC efectiva aplicada
-   - prioridad sobre WiFi
+   - `set_valves` en la variante con valvulas
+6. Si hay ENC28J60 conectado:
+   - verificar link
+   - verificar IP
+   - verificar MAC efectiva
+   - verificar que MQTT salga por Ethernet
+   - desconectar Ethernet y verificar fallback a WiFi STA
 
-## Cierre
+## Pendiente de validacion fisica
 
-El firmware quedó listo para flashear y probar en hardware real. Lo pendiente ya no es desarrollo base sino validación física:
-
-- pin final del motor si cambia
-- verificación del cableado real de sensores
-- verificación del módulo SD
-- verificación del `ENC28J60` en tu red
+- cableado final del motor si cambia
+- respuesta real de sensores
+- estabilidad del modulo SD
+- validacion de ENC28J60 en la red del cliente

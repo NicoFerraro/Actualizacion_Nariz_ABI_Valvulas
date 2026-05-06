@@ -9,9 +9,9 @@
 #include <WiFiGeneric.h>
 #include <ESPAsyncWebServer.h>
 #include <AsyncTCP.h>
-#include <AsyncMqttClient.h>
-#include <ESP32-ENC28J60.h>
+#include <EthernetENC.h>
 #include <GasSensors.h>
+#include <PubSubClient.h>
 #include <SPI.h>
 #include <Wire.h>
 #include <RTClib.h>
@@ -85,10 +85,11 @@ class AppRuntime {
 
   RTC_DS1307 rtc;
   AsyncWebServer server{80};
-  AsyncMqttClient mqttClient;
+  PubSubClient mqttClient;
+  WiFiClient wifiMqttClient;
+  EthernetClient ethernetMqttClient;
   Preferences preferences;
   StorageManager storageManager;
-  SPIClass spiBus{VSPI};
 
   RuntimeConfig runtimeConfig{};
   OtaStatus otaStatus{"OTA deshabilitada", "Nunca", "-", false};
@@ -109,6 +110,7 @@ class AppRuntime {
   unsigned long lastStatusPublishAtMs = 0;
   unsigned long lastStorageRemountAttemptAtMs = 0;
   unsigned long ethernetInitNotBeforeAtMs = 0;
+  unsigned long lastEthernetAttemptAtMs = 0;
   unsigned long pendingRestartAtMs = 0;
   wifi_event_id_t networkEventHandlerId = 0;
 
@@ -124,8 +126,12 @@ class AppRuntime {
   String mqttTopicCommand;
   String mqttTopicCommandResponse;
   String lastPublishedStorageAlarmCode;
-  String mqttIncomingTopic;
-  String mqttIncomingPayload;
+  String mqttActiveTransport;
+  String mqttLastError;
+  String mqttLastPublish;
+  String mqttLastCommand;
+  String ethernetDetailMessage;
+  String ethernetCurrentMac;
 
   bool pendingStateLog = false;
   bool pendingIdleLog = false;
@@ -136,8 +142,11 @@ class AppRuntime {
   bool mqttConnected = false;
   bool ethernetInitAttempted = false;
   bool ethernetStarted = false;
+  bool ethernetHardwarePresent = false;
   bool ethernetLinkUp = false;
   bool ethernetHasIp = false;
+  bool mqttUsingEthernet = false;
+  uint8_t ethernetMac[6] = {0};
 
   void setupHardware();
   void setupRtc();
@@ -196,12 +205,16 @@ class AppRuntime {
   void publishMqttStorageAlarmIfNeeded();
   void publishMqttAlarm(const String& code, const String& severity, const String& message);
   void publishMqttCommandResponse(const String& requestId, bool ok, const String& message);
-  void handleMqttConnect(bool sessionPresent);
-  void handleMqttDisconnect(AsyncMqttClientDisconnectReason reason);
-  void handleMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties properties, size_t len, size_t index, size_t total);
+  void handleMqttConnect();
+  void handleMqttDisconnect(const String& reason);
+  void handleMqttMessage(const String& topic, const String& payload);
   void handleMqttCommand(const String& payload);
   void refreshMqttTopics();
   void runOtaCheck(bool manualTrigger);
+  bool ensureMqttTransportSelected(const char*& transportName);
+  bool connectMqtt();
+  bool mqttPublish(const String& topic, const String& payload, bool retained);
+  static void handleMqttMessageStatic(char* topic, byte* payload, unsigned int length);
   bool parseManifest(const String& manifestBody, OtaManifest& manifest);
   bool downloadAndApplyFirmware(const OtaManifest& manifest, String& message);
 
@@ -232,7 +245,8 @@ class AppRuntime {
                                 String& error);
   bool validateOtaConfigValues(bool enabled, String& manifestUrl, String& error);
   bool parseMacAddress(const String& rawValue, uint8_t macBytes[6], String& normalized, String& error);
-  bool probeEnc28j60Module(uint8_t& revision, String& detail);
+  void deselectSpiDevices();
+  void buildDefaultEthernetMac(uint8_t macBytes[6]);
 
   String buildAuthJson(AccessRole role);
   String buildDataJson();

@@ -272,7 +272,7 @@ const char index_html[] PROGMEM = R"rawliteral(
             <label for="eth-gateway">Gateway</label><input id="eth-gateway" type="text" placeholder="192.168.1.1">
             <label for="eth-dns1">DNS 1</label><input id="eth-dns1" type="text" placeholder="192.168.1.1">
             <label for="eth-dns2">DNS 2</label><input id="eth-dns2" type="text" placeholder="8.8.8.8">
-            <div class="hint">Ethernet no usa SSID ni clave: al ser por cable solo necesita enlace fisico y, segun el caso, DHCP o IP fija. El equipo prioriza Ethernet para MQTT, OTA y NTP cuando tiene enlace e IP.</div>
+            <div class="hint">Ethernet no usa SSID ni clave: al ser por cable solo necesita enlace fisico y, segun el caso, DHCP o IP fija. En este producto se usa como transporte MQTT hacia la red del cliente. La web local sigue saliendo por AP/WiFi.</div>
             <div class="message" id="msg-ethernet">SPI compartido con SD. Pines reservados: SCK18 / MISO19 / MOSI23 / CS17 / INT34 / RST16.</div>
           </div>
           <div class="card">
@@ -475,10 +475,10 @@ const char index_html[] PROGMEM = R"rawliteral(
         document.getElementById("uplink-status").innerText = (data.activeUplink || "-").toUpperCase();
         document.getElementById("wifi-status").innerText = data.wifiStatus + " / " + data.wifiSSID + " / " + data.localIP;
         document.getElementById("ethernet-status").innerText = data.ethernetStatus + " / " + data.ethernetIP;
-        document.getElementById("mqtt-status").innerText = (data.mqttConnected ? "MQTT OK" : "MQTT OFF") + " / SD " + (data.sdAlarm || "-");
+        document.getElementById("mqtt-status").innerText = (data.mqttConnected ? ("MQTT " + (data.mqttTransport || "-").toUpperCase()) : "MQTT OFF") + " / SD " + (data.sdAlarm || "-");
         document.getElementById("ap-ip").innerText = data.apIP;
         document.getElementById("firmware-version").innerText = data.firmwareVersion;
-        document.getElementById("ota-summary").innerText = "OTA: " + data.otaMessage + "\nUltimo chequeo: " + data.otaLastCheck + "\nVersion disponible: " + data.otaAvailableVersion + "\nUplink: " + (data.activeUplink || "-") + "\nBuild: " + data.buildStamp + "\nReset: " + data.resetReason;
+        document.getElementById("ota-summary").innerText = "OTA: " + data.otaMessage + "\nUltimo chequeo: " + data.otaLastCheck + "\nVersion disponible: " + data.otaAvailableVersion + "\nUplink: " + (data.activeUplink || "-") + "\nMQTT transporte: " + (data.mqttTransport || "-") + "\nMQTT ultimo publish: " + (data.mqttLastPublish || "-") + "\nMQTT ultimo error: " + (data.mqttLastError || "-") + "\nEthernet: " + (data.ethernetDetail || "-") + "\nBuild: " + data.buildStamp + "\nReset: " + data.resetReason;
         const pill = document.getElementById("pill-state");
         pill.className = "status-pill";
         if (data.state === "MUESTRA" || data.state === "CONTINUO") pill.classList.add("state-sample");
@@ -592,7 +592,7 @@ const char index_html[] PROGMEM = R"rawliteral(
         document.getElementById("eth-gateway").value = data.ethernetGateway || "";
         document.getElementById("eth-dns1").value = data.ethernetDns1 || "";
         document.getElementById("eth-dns2").value = data.ethernetDns2 || "";
-        setMessage("msg-ethernet", "SPI compartido con SD. Pines reservados: SCK18 / MISO19 / MOSI23 / CS17 / INT34 / RST16.\nMAC actual: " + (data.ethernetCurrentMac || "pendiente") + "\nMAC personalizada: " + (data.ethernetUseCustomMac ? (data.ethernetMacAddress || "-") : "deshabilitada"));
+        setMessage("msg-ethernet", "SPI compartido con SD. Pines reservados: SCK18 / MISO19 / MOSI23 / CS17 / INT34 / RST16.\nMAC actual: " + (data.ethernetCurrentMac || "pendiente") + "\nMAC personalizada: " + (data.ethernetUseCustomMac ? (data.ethernetMacAddress || "-") : "deshabilitada") + "\nObjetivo: MQTT saliente por Ethernet o WiFi STA.");
         document.getElementById("mqtt-enabled").checked = !!data.mqttEnabled;
         document.getElementById("mqtt-host").value = data.mqttBrokerHost || "";
         document.getElementById("mqtt-port").value = data.mqttBrokerPort || 1883;
